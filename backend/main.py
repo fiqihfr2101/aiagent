@@ -18,6 +18,7 @@ from app.infrastructure.metrics_collector import MetricsCollector
 from app.infrastructure.task_repository import TaskRepository
 from app.infrastructure.log_repository import LogRepository
 from app.infrastructure.agent_repository import VALID_MODELS
+from app.infrastructure.agent_config_repository import AgentConfigRepository
 from app.infrastructure.notification_service import NotificationService
 from app.infrastructure.cache_service import cache
 from app.infrastructure.ws_manager import ws_manager, CHANNELS
@@ -40,6 +41,11 @@ from app.interfaces.schemas import (
     sanitize_plain, sanitize_text,
     WorkflowCreate, WorkflowUpdate,
     MemorySearch, MemoryShare,
+)
+from app.interfaces.config_schemas import (
+    AgentConfigSave, AgentConfigClone,
+    TemplateCreate, TemplateApply, TemplateFromAgent,
+    EnvVarSet,
 )
 
 # ─── Input Sanitization Helpers ─────────────────────────────────
@@ -229,6 +235,7 @@ task_repo = TaskRepository(log_repo=log_repo)
 hermes = HermesEngine(_broadcast_shim, metrics_collector, task_repo=task_repo)
 notification_svc = NotificationService()
 workflow_repo = WorkflowRepository()
+config_repo = AgentConfigRepository()
 # Track active simulated tasks so they can be cancelled
 _active_sim_tasks: dict[str, asyncio.Task] = {}
 
@@ -1105,6 +1112,135 @@ async def ws_metrics_broadcast_loop():
             ], channel="metrics")
         except Exception as e:
             logger.error("Metrics broadcast error: %s", e)
+
+# ─── Agent Configuration Endpoints ──────────────────────────────
+
+@app.post("/agents/{agent_id}/config")
+async def save_agent_config(agent_id: str, data: AgentConfigSave):
+    """Save an agent's configuration."""
+    agent = hermes.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    config = config_repo.save_config(agent_id, data.model_dump())
+    return config
+
+
+@app.get("/agents/{agent_id}/config")
+async def get_agent_config(agent_id: str):
+    """Get an agent's configuration."""
+    agent = hermes.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    config = config_repo.get_config(agent_id)
+    if not config:
+        # Return default config
+        return {
+            "agent_id": agent_id,
+            "model": agent.get("model", "claude-sonnet-4"),
+            "system_prompt": "",
+            "temperature": 0.5,
+            "max_tokens": 4096,
+            "tools": [],
+            "toolsets": [],
+            "env_vars": {},
+        }
+    return config
+
+
+@app.post("/agents/{agent_id}/config/clone")
+async def clone_agent_config(agent_id: str, data: AgentConfigClone):
+    """Clone config from one agent to another."""
+    agent = hermes.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Source agent not found")
+    target = hermes.get_agent(data.target_agent_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target agent not found")
+    try:
+        config = config_repo.clone_config(agent_id, data.target_agent_id)
+        return config
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/agents/{agent_id}/config/apply-template")
+async def apply_template_to_agent(agent_id: str, data: TemplateApply):
+    """Apply a template to an agent's config."""
+    agent = hermes.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    try:
+        config = config_repo.apply_template(agent_id, data.template_id)
+        return config
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/agents/{agent_id}/config/env")
+async def get_agent_env_vars(agent_id: str):
+    """Get environment variables for an agent."""
+    agent = hermes.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return {"env_vars": config_repo.get_env_vars(agent_id)}
+
+
+@app.post("/agents/{agent_id}/config/env")
+async def set_agent_env_var(agent_id: str, data: EnvVarSet):
+    """Set an environment variable for an agent."""
+    agent = hermes.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    env_vars = config_repo.set_env_var(agent_id, data.key, data.value)
+    return {"env_vars": env_vars}
+
+
+@app.delete("/agents/{agent_id}/config/env/{key}")
+async def delete_agent_env_var(agent_id: str, key: str):
+    """Delete an environment variable for an agent."""
+    agent = hermes.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    env_vars = config_repo.delete_env_var(agent_id, key)
+    return {"env_vars": env_vars}
+
+
+# ─── Template Endpoints ─────────────────────────────────────────
+
+@app.get("/templates")
+async def list_templates():
+    """List all config templates."""
+    return {"templates": config_repo.get_templates()}
+
+
+@app.post("/templates")
+async def create_template(data: TemplateCreate):
+    """Create a new config template."""
+    template = config_repo.create_template(data.model_dump())
+    return template
+
+
+@app.get("/templates/{template_id}")
+async def get_template(template_id: str):
+    """Get a template by ID."""
+    template = config_repo.get_template(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
+
+
+@app.post("/templates/from-agent/{agent_id}")
+async def create_template_from_agent(agent_id: str, data: TemplateFromAgent):
+    """Create a template from an agent's current config."""
+    agent = hermes.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    try:
+        template = config_repo.create_template_from_agent(agent_id, data.name, data.description)
+        return template
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 # ─── Workflow CRUD Endpoints ─────────────────────────────────────
 

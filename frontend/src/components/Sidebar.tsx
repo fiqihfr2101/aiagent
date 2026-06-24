@@ -26,6 +26,9 @@ const TABS = [
   { id: 'analytics', label: 'Diagnostics', icon: (
     <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><path d="M3 3v18h18M7 14l3-4 3 3 4-6"/></svg>
   )},
+  { id: 'templates', label: 'Templates', icon: (
+    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
+  )},
 ];
 
 const Sidebar: React.FC<SidebarProps> = memo(({ activeL2, setActiveL2, stats }) => {

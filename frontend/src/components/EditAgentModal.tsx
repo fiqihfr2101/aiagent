@@ -2,6 +2,7 @@
 
 import React, { memo, useState, useEffect } from 'react';
 import { Agent } from '../types';
+import AgentConfig from './AgentConfig';
 
 interface ModelInfo {
   id: string;
@@ -13,11 +14,15 @@ interface ModelInfo {
 interface EditAgentModalProps {
   isOpen: boolean;
   agent: Agent | null;
+  agents: Array<{ id: string; name: string }>;
   onClose: () => void;
   onAgentUpdated: (agent: any) => void;
 }
 
-const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, onClose, onAgentUpdated }) => {
+type TabKey = 'details' | 'config';
+
+const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, agents = [], onClose, onAgentUpdated }) => {
+  const [activeTab, setActiveTab] = useState<TabKey>('details');
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [model, setModel] = useState('claude-sonnet-4');
@@ -48,6 +53,8 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, onC
       setName(agent.name);
       setRole(agent.role);
       setModel(agent.model || 'claude-sonnet-4');
+      setActiveTab('details');
+      setError('');
     }
   }, [agent]);
 
@@ -96,11 +103,17 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, onC
 
   if (!isOpen || !agent) return null;
 
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: 'details', label: 'Details' },
+    { key: 'config', label: 'Config' },
+  ];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/70 animate-fadein" onClick={onClose}></div>
-      <div className="relative bg-bg2 border border-border-custom rounded-xl w-[400px] p-6 animate-fadein shadow-2xl">
-        <div className="flex items-center justify-between mb-5">
+      <div className="relative bg-bg2 border border-border-custom rounded-xl w-[460px] max-h-[85vh] flex flex-col animate-fadein shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 pb-0">
           <div>
             <h2 className="text-[15px] font-bold tracking-[0.04em] text-txt">Edit Agent</h2>
             <p className="text-[10px] text-txt3 mt-0.5">Update {agent.name}&apos;s configuration</p>
@@ -110,75 +123,107 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, onC
           </button>
         </div>
 
-        {error && (
-          <div className="mb-4 p-2 rounded-lg bg-red-custom/10 border border-red-custom/30 text-red-custom text-[11px] font-mono">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-[9px] text-txt3 uppercase tracking-[0.14em] mb-1.5 font-semibold">Agent Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3/50 focus:outline-none focus:border-cyan-custom/50 transition-colors"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[9px] text-txt3 uppercase tracking-[0.14em] mb-1.5 font-semibold">Role</label>
-            <input
-              type="text"
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3/50 focus:outline-none focus:border-cyan-custom/50 transition-colors"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[9px] text-txt3 uppercase tracking-[0.14em] mb-1.5 font-semibold">Model</label>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono focus:outline-none focus:border-cyan-custom/50 transition-colors appearance-none cursor-pointer"
+        {/* Tabs */}
+        <div className="flex gap-1 px-5 pt-4">
+          {tabs.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`px-4 py-2 rounded-lg text-[11px] font-semibold transition-colors ${
+                activeTab === tab.key
+                  ? 'bg-cyan-custom/20 text-cyan-custom border border-cyan-custom/30'
+                  : 'text-txt3 hover:text-txt2 hover:bg-bg3 border border-transparent'
+              }`}
             >
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-            {/* Model rate display */}
-            {selectedModelInfo && (
-              <div className="mt-1.5 flex items-center gap-2 text-[9px] font-mono">
-                <span className={`font-semibold ${getFamilyColor(selectedModelInfo.family)}`}>
-                  {selectedModelInfo.family.toUpperCase()}
-                </span>
-                <span className="text-txt3">·</span>
-                <span className="text-txt3">
-                  ${selectedModelInfo.rates.input}/1K in · ${selectedModelInfo.rates.output}/1K out
-                </span>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-5">
+          {error && (
+            <div className="mb-4 p-2 rounded-lg bg-red-custom/10 border border-red-custom/30 text-red-custom text-[11px] font-mono">
+              {error}
+            </div>
+          )}
+
+          {/* Details Tab */}
+          {activeTab === 'details' && (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[9px] text-txt3 uppercase tracking-[0.14em] mb-1.5 font-semibold">Agent Name</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3/50 focus:outline-none focus:border-cyan-custom/50 transition-colors"
+                />
               </div>
-            )}
-          </div>
 
-          <div className="flex gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 rounded-lg text-[11px] font-medium border border-border-custom text-txt2 hover:bg-bg3 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className={`flex-1 px-4 py-2 rounded-lg text-[11px] font-bold bg-cyan-custom/20 border border-cyan-custom/40 text-cyan-custom hover:bg-cyan-custom/30 transition-colors ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              {isSubmitting ? 'Saving...' : 'Save Changes'}
-            </button>
-          </div>
-        </form>
+              <div>
+                <label className="block text-[9px] text-txt3 uppercase tracking-[0.14em] mb-1.5 font-semibold">Role</label>
+                <input
+                  type="text"
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3/50 focus:outline-none focus:border-cyan-custom/50 transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[9px] text-txt3 uppercase tracking-[0.14em] mb-1.5 font-semibold">Model</label>
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono focus:outline-none focus:border-cyan-custom/50 transition-colors appearance-none cursor-pointer"
+                >
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+                {/* Model rate display */}
+                {selectedModelInfo && (
+                  <div className="mt-1.5 flex items-center gap-2 text-[9px] font-mono">
+                    <span className={`font-semibold ${getFamilyColor(selectedModelInfo.family)}`}>
+                      {selectedModelInfo.family.toUpperCase()}
+                    </span>
+                    <span className="text-txt3">·</span>
+                    <span className="text-txt3">
+                      ${selectedModelInfo.rates.input}/1K in · ${selectedModelInfo.rates.output}/1K out
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="flex-1 px-4 py-2 rounded-lg text-[11px] font-medium border border-border-custom text-txt2 hover:bg-bg3 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className={`flex-1 px-4 py-2 rounded-lg text-[11px] font-bold bg-cyan-custom/20 border border-cyan-custom/40 text-cyan-custom hover:bg-cyan-custom/30 transition-colors ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {isSubmitting ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Config Tab */}
+          {activeTab === 'config' && (
+            <AgentConfig
+              agentId={agent.id}
+              agentName={agent.name}
+              agents={agents}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

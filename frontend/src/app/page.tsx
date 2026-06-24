@@ -17,6 +17,7 @@ const AnalyticsView = lazy(() => import('@/components/AnalyticsView'));
 const CostDashboard = lazy(() => import('@/components/CostDashboard'));
 const AddAgentModal = lazy(() => import('@/components/AddAgentModal'));
 const EditAgentModal = lazy(() => import('@/components/EditAgentModal'));
+const TemplateManager = lazy(() => import('@/components/TemplateManager'));
 const TaskDispatchModal = lazy(() => import('@/components/TaskDispatchModal'));
 const TaskHistory = lazy(() => import('@/components/TaskHistory'));
 const TaskLogs = lazy(() => import('@/components/TaskLogs'));
@@ -408,6 +409,14 @@ export default function MissionControl() {
           </div>
         )}
 
+        {activeL1 === 'overview' && activeL2 === 'templates' && (
+          <div className="view on h-full animate-fadein p-4">
+            <Suspense fallback={<ComponentLoader />}>
+              <TemplateManager agents={agents} onClose={() => setActiveL2('overview')} />
+            </Suspense>
+          </div>
+        )}
+
       </main>
 
       {/* MODALS — lazy loaded, only mounted when open */}
@@ -426,6 +435,7 @@ export default function MissionControl() {
           <EditAgentModal
             isOpen={isEditModalOpen}
             agent={editingAgent}
+            agents={agents}
             onClose={() => { setIsEditModalOpen(false); setEditingAgent(null); }}
             onAgentUpdated={handleAgentUpdated}
           />
