@@ -16,12 +16,41 @@ export default function MissionControl() {
   const [activeL2, setActiveL2] = useState('overview');
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState('overview');
+  const [taskTitle, setTaskTitle] = useState('');
+  const [taskPriority, setTaskPriority] = useState('p1');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { agents, logs, systemOnline, stats } = useWebSocket('ws://localhost:8000/ws');
 
   const handleOpenDrawer = (id: string) => {
     setSelectedAgentId(id);
     setIsDrawerOpen(true);
+    setDrawerTab('overview');
+  };
+
+  const handleDispatchTask = async () => {
+    if (!selectedAgentId || !taskTitle) return;
+    setIsSubmitting(true);
+    try {
+      const response = await fetch('http://localhost:8000/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: selectedAgentId,
+          title: taskTitle,
+          priority: taskPriority,
+        }),
+      });
+      if (response.ok) {
+        setTaskTitle('');
+        setDrawerTab('logs');
+      }
+    } catch (error) {
+      console.error('Failed to dispatch task:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const activeAgent = agents.find(a => a.id === selectedAgentId);
@@ -119,7 +148,7 @@ export default function MissionControl() {
       {isDrawerOpen && activeAgent && (
         <>
           <div className="fixed inset-0 bg-black/70 z-40 animate-fadein" onClick={() => setIsDrawerOpen(false)}></div>
-          <div className="fixed top-0 right-0 h-full w-[390px] bg-bg2 border-l border-border-custom z-50 animate-fadein transform translate-x-0 transition-transform">
+          <div className="fixed top-0 right-0 h-full w-[390px] bg-bg2 border-l border-border-custom z-50 animate-fadein transform translate-x-0 transition-transform flex flex-col">
             <div className="p-4 border-b border-border-custom">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
@@ -139,9 +168,75 @@ export default function MissionControl() {
                 {activeAgent.status.toUpperCase()}
               </span>
             </div>
-            <div className="p-4">
-               {/* Drawer content (logs, config, etc) could be added here */}
-               <div className="text-txt3 text-xs italic">Details view for {activeAgent.name} in progress...</div>
+
+            <div className="drtabs">
+              <div className={`drtab ${drawerTab === 'overview' ? 'on' : ''}`} onClick={() => setDrawerTab('overview')}>Overview</div>
+              <div className={`drtab ${drawerTab === 'tasks' ? 'on' : ''}`} onClick={() => setDrawerTab('tasks')}>Tasks</div>
+              <div className={`drtab ${drawerTab === 'logs' ? 'on' : ''}`} onClick={() => setDrawerTab('logs')}>Logs</div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+               {drawerTab === 'overview' && (
+                 <div className="animate-fadein">
+                   <div className="grid grid-cols-2 gap-2 mb-4">
+                     <div className="bg-bg3 border border-border-custom rounded-lg p-3">
+                       <div className="text-[8px] text-txt2 uppercase tracking-wider mb-1">Uptime</div>
+                       <div className="text-lg font-mono font-bold text-grn-custom">{activeAgent.uptime}</div>
+                     </div>
+                     <div className="bg-bg3 border border-border-custom rounded-lg p-3">
+                       <div className="text-[8px] text-txt2 uppercase tracking-wider mb-1">Heartbeat</div>
+                       <div className="text-lg font-mono font-bold text-cyan-custom">{activeAgent.hb}</div>
+                     </div>
+                   </div>
+                   <div className="text-txt2 text-[11px] leading-relaxed">
+                     Agent {activeAgent.name} is currently {activeAgent.status}. 
+                     Last seen {activeAgent.seen}.
+                   </div>
+                 </div>
+               )}
+
+               {drawerTab === 'tasks' && (
+                 <div className="animate-fadein">
+                   <div className="text-[9px] text-txt3 uppercase tracking-[0.14em] mb-4">Dispatch New Task</div>
+                   <div className="field">
+                     <label>Task Description / Prompt</label>
+                     <textarea 
+                        className="h-24 resize-none"
+                        placeholder="Enter instructions for the agent..."
+                        value={taskTitle}
+                        onChange={(e) => setTaskTitle(e.target.value)}
+                     />
+                   </div>
+                   <div className="field">
+                     <label>Priority Level</label>
+                     <select value={taskPriority} onChange={(e) => setTaskPriority(e.target.value)}>
+                       <option value="p1">P1 — High Priority</option>
+                       <option value="p2">P2 — Medium Priority</option>
+                       <option value="p3">P3 — Low Priority</option>
+                     </select>
+                   </div>
+                   <button 
+                    className={`btn btn-pri w-full justify-center mt-2 ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    onClick={handleDispatchTask}
+                    disabled={isSubmitting}
+                   >
+                     {isSubmitting ? 'Dispatching...' : 'Dispatch Task'}
+                   </button>
+                 </div>
+               )}
+
+               {drawerTab === 'logs' && (
+                 <div className="animate-fadein bg-bg5 border border-border-custom rounded-lg p-3 font-mono text-[10px] leading-relaxed">
+                   {logs.filter(l => l[1] === activeAgent.name).map((log, i) => (
+                     <div key={i} className="mb-1">
+                       <span className="text-txt3">[{log[0]}]</span> <span className="text-cyan-custom font-semibold mr-2">{log[2]}</span> <span className="text-txt">{log[3]}</span>
+                     </div>
+                   ))}
+                   {logs.filter(l => l[1] === activeAgent.name).length === 0 && (
+                     <div className="text-txt3 italic">// No recent logs for this agent</div>
+                   )}
+                 </div>
+               )}
             </div>
           </div>
         </>

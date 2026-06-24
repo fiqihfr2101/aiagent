@@ -45,6 +45,6 @@ backend/
 - [x] Implement `HermesAdapter` for autonomous agent execution.
 - [x] Integrate Hermes tasks into Temporal Workflows & Activities.
 - [x] Setup persistence for agent memories via ChromaDB.
-- [ ] Implement Task Routing from Dashboard UI to Temporal.
-- [ ] Real-time log streaming from Hermes to Next.js.
+- [x] Implement Task Routing from Dashboard UI to Temporal.
+- [x] Real-time log streaming from Hermes to Next.js.
 - [ ] Advanced diagnostics & cost tracking.

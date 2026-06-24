@@ -209,3 +209,69 @@ body::after {
   filter: blur(6px);
   opacity: .25;
 }
+
+/* ── DRAWER TABS ── */
+.drtabs {
+  display: flex;
+  gap: 1px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.drtab {
+  padding: 9px 11px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--txt3);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all .15s;
+}
+.drtab:hover {
+  color: var(--txt2);
+}
+.drtab.on {
+  color: var(--cyan);
+  border-bottom-color: var(--cyan);
+}
+
+/* ── BADGE ── */
+.badge.active { background: rgba(0, 212, 170, .1); color: var(--cyan); border-color: rgba(0, 212, 170, .25); }
+.badge.sleeping { background: rgba(245, 158, 11, .08); color: var(--amb); border-color: rgba(245, 158, 11, .2); }
+.badge.offline { background: rgba(239, 68, 68, .08); color: var(--red); border-color: rgba(239, 68, 68, .18); }
+
+/* ── FIELD & INPUTS ── */
+.field { margin-bottom: 11px; }
+.field label { display: block; font-size: 9px; color: var(--txt2); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
+.field input, .field select, .field textarea {
+  width: 100%;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--txt);
+  padding: 8px 10px;
+  font-size: 11px;
+  font-family: var(--sans);
+  outline: none;
+}
+.field input:focus, .field select:focus, .field textarea:focus { border-color: rgba(0, 212, 170, .35); }
+
+/* ── BUTTONS ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border2);
+  background: var(--bg3);
+  color: var(--txt);
+  transition: all .15s;
+}
+.btn:hover { background: var(--bg4); }
+.btn-pri { background: var(--ind); border-color: var(--ind); color: #fff; }
+.btn-pri:hover { background: #4F46E5; }
+.btn-cyan { background: rgba(0, 212, 170, .08); border-color: rgba(0, 212, 170, .28); color: var(--cyan); }
+
