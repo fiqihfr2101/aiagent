@@ -4,6 +4,8 @@ import datetime
 from typing import Optional, List, Dict, Any
 import logging
 
+from .db_pool import get_pool
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,17 +14,12 @@ class TaskRepository:
 
     def __init__(self, db_path: str = "hermes_agents.db", log_repo=None):
         self.db_path = db_path
+        self._pool = get_pool(db_path)
         self._log_repo = log_repo
         self._init_db()
 
-    def _get_conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
     def _init_db(self):
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
@@ -39,15 +36,12 @@ class TaskRepository:
                 )
             """)
             conn.commit()
-        finally:
-            conn.close()
 
     def create(self, agent_id: str, title: str, priority: str = "P2", workflow_id: str = None) -> Dict[str, Any]:
         """Create a new task."""
         task_id = f"task-{uuid.uuid4().hex[:8]}"
         now = datetime.datetime.now().isoformat()
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             conn.execute(
                 "INSERT INTO tasks (id, agent_id, title, priority, status, created_at, workflow_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (task_id, agent_id, title, priority.upper(), "QUEUED", now, workflow_id)
@@ -57,13 +51,10 @@ class TaskRepository:
             self._add_log(task_id, agent_id, "INFO", f"Task created: {title} (priority: {priority.upper()})")
             logger.info("Task created: %s [%s] agent=%s", title, task_id, agent_id)
             return task
-        finally:
-            conn.close()
 
     def get_all(self, agent_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
         """List tasks with optional filters."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             query = "SELECT * FROM tasks WHERE 1=1"
             params = []
             if agent_id:
@@ -75,23 +66,17 @@ class TaskRepository:
             query += " ORDER BY created_at DESC"
             rows = conn.execute(query, params).fetchall()
             return [self._row_to_dict(row) for row in rows]
-        finally:
-            conn.close()
 
     def get_by_id(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get task by ID."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
             return self._row_to_dict(row) if row else None
-        finally:
-            conn.close()
 
     def update_status(self, task_id: str, status: str, result: str = None, tokens_used: int = None) -> Optional[Dict[str, Any]]:
         """Update task status with optional result and token count."""
         now = datetime.datetime.now().isoformat()
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             updates = {"status": status.upper()}
             if status.upper() == "RUNNING":
                 updates["started_at"] = now
@@ -111,13 +96,10 @@ class TaskRepository:
                 self._add_log(task_id, updated.get("agent_id"), "INFO", f"Task status → {status.upper()}")
                 logger.info("Task %s status → %s", task_id, status.upper())
             return updated
-        finally:
-            conn.close()
 
     def get_history(self, page: int = 1, page_size: int = 20, agent_id: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
         """Get paginated task history."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             where = "WHERE 1=1"
             params = []
             if agent_id:
@@ -141,31 +123,23 @@ class TaskRepository:
                 "page_size": page_size,
                 "total_pages": (count + page_size - 1) // page_size if count > 0 else 1,
             }
-        finally:
-            conn.close()
 
     def get_active_task_count(self, agent_id: str) -> int:
         """Get count of active (QUEUED + RUNNING) tasks for an agent."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM tasks WHERE agent_id = ? AND status IN ('QUEUED', 'RUNNING')",
                 (agent_id,)
             ).fetchone()
             return row[0]
-        finally:
-            conn.close()
 
     def get_all_active_task_counts(self) -> Dict[str, int]:
         """Get active task counts for all agents."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             rows = conn.execute(
                 "SELECT agent_id, COUNT(*) FROM tasks WHERE status IN ('QUEUED', 'RUNNING') GROUP BY agent_id"
             ).fetchall()
             return {row[0]: row[1] for row in rows}
-        finally:
-            conn.close()
 
     def _row_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         d = dict(row)

@@ -11,6 +11,7 @@ import asyncio
 import os
 from typing import Optional, List, Dict, Any
 
+from .db_pool import get_pool
 
 # Notification type constants
 NOTIFICATION_TYPES = [
@@ -45,19 +46,14 @@ class NotificationService:
 
     def __init__(self, db_path: str = "hermes_agents.db"):
         self.db_path = db_path
+        self._pool = get_pool(db_path)
         self._telegram_token: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
         self._telegram_chat_id: Optional[str] = os.getenv("TELEGRAM_CHAT_ID")
         self._dashboard_url: str = os.getenv("DASHBOARD_URL", "http://localhost:3000")
         self._init_db()
 
-    def _get_conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
     def _init_db(self):
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS notifications (
                     id TEXT PRIMARY KEY,
@@ -70,8 +66,6 @@ class NotificationService:
                 )
             """)
             conn.commit()
-        finally:
-            conn.close()
 
     # ─── CRUD ──────────────────────────────────────────────────────
 
@@ -85,8 +79,7 @@ class NotificationService:
         """Create a new notification."""
         notif_id = f"notif-{uuid.uuid4().hex[:8]}"
         now = datetime.datetime.now().isoformat()
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             conn.execute(
                 "INSERT INTO notifications (id, type, title, description, read, data, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)",
                 (notif_id, notification_type, title, description, self._serialize_data(data), now),
@@ -95,15 +88,12 @@ class NotificationService:
             return self._row_to_dict(
                 conn.execute("SELECT * FROM notifications WHERE id = ?", (notif_id,)).fetchone()
             )
-        finally:
-            conn.close()
 
     def get_all(
         self, page: int = 1, page_size: int = 50, unread_only: bool = False
     ) -> Dict[str, Any]:
         """Get paginated notifications."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             where = "WHERE 1=1"
             params: list = []
             if unread_only:
@@ -124,47 +114,33 @@ class NotificationService:
                 "total_pages": max((count + page_size - 1) // page_size, 1),
                 "unread_count": self._unread_count(),
             }
-        finally:
-            conn.close()
 
     def get_by_id(self, notif_id: str) -> Optional[Dict[str, Any]]:
         """Get notification by ID."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             row = conn.execute("SELECT * FROM notifications WHERE id = ?", (notif_id,)).fetchone()
             return self._row_to_dict(row) if row else None
-        finally:
-            conn.close()
 
     def mark_read(self, notif_id: str) -> Optional[Dict[str, Any]]:
         """Mark a single notification as read."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             conn.execute("UPDATE notifications SET read = 1 WHERE id = ?", (notif_id,))
             conn.commit()
             return self.get_by_id(notif_id)
-        finally:
-            conn.close()
 
     def mark_all_read(self) -> int:
         """Mark all notifications as read. Returns count updated."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             cursor = conn.execute("UPDATE notifications SET read = 1 WHERE read = 0")
             conn.commit()
             return cursor.rowcount
-        finally:
-            conn.close()
 
     def delete(self, notif_id: str) -> bool:
         """Delete a notification by ID."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             cursor = conn.execute("DELETE FROM notifications WHERE id = ?", (notif_id,))
             conn.commit()
             return cursor.rowcount > 0
-        finally:
-            conn.close()
 
     def get_unread_count(self) -> int:
         """Get count of unread notifications."""
@@ -221,12 +197,9 @@ class NotificationService:
     # ─── Helpers ───────────────────────────────────────────────────
 
     def _unread_count(self) -> int:
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             row = conn.execute("SELECT COUNT(*) FROM notifications WHERE read = 0").fetchone()
             return row[0]
-        finally:
-            conn.close()
 
     @staticmethod
     def _serialize_data(data: Optional[Dict[str, Any]]) -> Optional[str]:

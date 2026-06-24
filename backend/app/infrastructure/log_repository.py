@@ -3,22 +3,19 @@ import uuid
 import datetime
 from typing import Optional, List, Dict, Any
 
+from .db_pool import get_pool
+
 
 class LogRepository:
     """SQLite-backed log storage with CRUD operations and filters."""
 
     def __init__(self, db_path: str = "hermes_agents.db"):
         self.db_path = db_path
+        self._pool = get_pool(db_path)
         self._init_db()
 
-    def _get_conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
     def _init_db(self):
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS task_logs (
                     id TEXT PRIMARY KEY,
@@ -43,8 +40,6 @@ class LogRepository:
                 CREATE INDEX IF NOT EXISTS idx_task_logs_timestamp ON task_logs(timestamp)
             """)
             conn.commit()
-        finally:
-            conn.close()
 
     def create(
         self,
@@ -57,8 +52,7 @@ class LogRepository:
         """Create a new log entry."""
         log_id = f"log-{uuid.uuid4().hex[:12]}"
         now = datetime.datetime.now().isoformat()
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             conn.execute(
                 "INSERT INTO task_logs (id, task_id, agent_id, level, message, timestamp, request_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (log_id, task_id, agent_id, level.upper(), message, now, request_id),
@@ -67,17 +61,12 @@ class LogRepository:
             return self._row_to_dict(
                 conn.execute("SELECT * FROM task_logs WHERE id = ?", (log_id,)).fetchone()
             )
-        finally:
-            conn.close()
 
     def get_by_id(self, log_id: str) -> Optional[Dict[str, Any]]:
         """Get log entry by ID."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             row = conn.execute("SELECT * FROM task_logs WHERE id = ?", (log_id,)).fetchone()
             return self._row_to_dict(row) if row else None
-        finally:
-            conn.close()
 
     def get_all(
         self,
@@ -88,8 +77,7 @@ class LogRepository:
         offset: int = 0,
     ) -> Dict[str, Any]:
         """Get logs with optional filters, pagination."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             where = "WHERE 1=1"
             params: list = []
             if task_id:
@@ -114,40 +102,29 @@ class LogRepository:
                 "limit": limit,
                 "offset": offset,
             }
-        finally:
-            conn.close()
 
     def get_for_task(self, task_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         """Get all logs for a specific task, ordered by timestamp."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM task_logs WHERE task_id = ? ORDER BY timestamp ASC LIMIT ?",
                 (task_id, limit),
             ).fetchall()
             return [self._row_to_dict(row) for row in rows]
-        finally:
-            conn.close()
 
     def delete(self, log_id: str) -> bool:
         """Delete a log entry."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             cursor = conn.execute("DELETE FROM task_logs WHERE id = ?", (log_id,))
             conn.commit()
             return cursor.rowcount > 0
-        finally:
-            conn.close()
 
     def delete_for_task(self, task_id: str) -> int:
         """Delete all logs for a task."""
-        conn = self._get_conn()
-        try:
+        with self._pool.connection() as conn:
             cursor = conn.execute("DELETE FROM task_logs WHERE task_id = ?", (task_id,))
             conn.commit()
             return cursor.rowcount
-        finally:
-            conn.close()
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
