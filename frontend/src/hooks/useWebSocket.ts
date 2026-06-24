@@ -18,6 +18,7 @@ export const useWebSocket = (url: string) => {
   const [lastStoppedTask, setLastStoppedTask] = useState<StoppedTaskEvent | null>(null);
   const [stoppingAgentIds, setStoppingAgentIds] = useState<Set<string>>(new Set());
   const [lastModelUpdate, setLastModelUpdate] = useState<{ agent_id: string; model: string } | null>(null);
+  const [lastNotification, setLastNotification] = useState<any>(null);
   
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -66,6 +67,8 @@ export const useWebSocket = (url: string) => {
             next.delete(stoppedTask.agent_id);
             return next;
           });
+        } else if (data.type === 'new_notification') {
+          setLastNotification(data.notification);
         }
       };
 
@@ -109,5 +112,5 @@ export const useWebSocket = (url: string) => {
     setStoppingAgentIds(prev => new Set(prev).add(agentId));
   };
 
-  return { agents, logs, systemOnline, stats, taskCounts, lastTaskUpdate, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate };
+  return { agents, logs, systemOnline, stats, taskCounts, lastTaskUpdate, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification };
 };

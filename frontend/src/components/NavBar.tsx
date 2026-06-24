@@ -6,9 +6,10 @@ interface NavBarProps {
   setActiveL1: (l1: string) => void;
   systemStatus: string;
   activeCount: string;
+  children?: React.ReactNode;
 }
 
-const NavBar: React.FC<NavBarProps> = ({ activeL1, setActiveL1, systemStatus, activeCount }) => {
+const NavBar: React.FC<NavBarProps> = ({ activeL1, setActiveL1, systemStatus, activeCount, children }) => {
   return (
     <nav className="flex-shrink-0 h-[44px] bg-[rgba(7,9,15,0.95)] border-b border-border-custom flex items-center px-4 gap-0 backdrop-blur-xl z-50">
       <div className="flex items-center gap-[9px] mr-6 cursor-pointer" onClick={() => setActiveL1('overview')}>
@@ -49,11 +50,13 @@ const NavBar: React.FC<NavBarProps> = ({ activeL1, setActiveL1, systemStatus, ac
           SYSTEM {systemStatus}
         </div>
         <div className="font-mono text-[10px] text-txt2">{activeCount}</div>
-        <div className="w-7 h-7 rounded-md border border-border-custom bg-transparent flex items-center justify-center cursor-pointer text-txt3 hover:text-txt hover:border-border2 transition-all duration-150">
-          <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-[14px] h-[14px] stroke-current">
-            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" />
-          </svg>
-        </div>
+        {children || (
+          <div className="w-7 h-7 rounded-md border border-border-custom bg-transparent flex items-center justify-center cursor-pointer text-txt3 hover:text-txt hover:border-border2 transition-all duration-150">
+            <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-[14px] h-[14px] stroke-current">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" />
+            </svg>
+          </div>
+        )}
         <div className="w-[26px] h-[26px] rounded-full bg-linear-to-br from-ind-custom to-[#4338CA] flex items-center justify-center text-[10px] font-bold text-white">FQ</div>
       </div>
     </nav>

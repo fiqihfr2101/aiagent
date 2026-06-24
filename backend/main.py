@@ -14,6 +14,7 @@ from app.infrastructure.memory_manager import MemoryManager
 from app.infrastructure.metrics_collector import MetricsCollector
 from app.infrastructure.task_repository import TaskRepository
 from app.infrastructure.agent_repository import VALID_MODELS
+from app.infrastructure.notification_service import NotificationService
 from workflows.agent_workflow import AgentTaskWorkflow
 
 # Load environment variables
@@ -55,9 +56,48 @@ metrics_collector = MetricsCollector()
 hermes = HermesEngine(manager.broadcast, metrics_collector)
 memory = MemoryManager()
 task_repo = TaskRepository()
+notification_svc = NotificationService()
 temporal_client = None
 # Track active simulated tasks so they can be cancelled
 _active_sim_tasks: dict[str, asyncio.Task] = {}
+
+
+# ─── Notification Helper ──────────────────────────────────────────
+
+async def _emit_notification(
+    notif_type: str,
+    title: str,
+    description: str = "",
+    data: dict = None,
+    # Telegram push params (optional)
+    task_title: str = None,
+    agent_name: str = None,
+    duration: float = None,
+    tokens_used: int = 0,
+    cost: float = 0.0,
+    status: str = None,
+):
+    """Create notification, broadcast via WebSocket, and push to Telegram."""
+    # Store in DB
+    notif = notification_svc.create(notif_type, title, description, data)
+
+    # Broadcast to all WebSocket clients
+    await manager.broadcast(json.dumps({
+        "type": "new_notification",
+        "notification": notif,
+    }))
+
+    # Push to Telegram if task-related
+    if task_title and agent_name and status:
+        telegram_msg = notification_svc.format_task_telegram(
+            task_title=task_title,
+            agent_name=agent_name,
+            status=status,
+            duration=duration,
+            tokens_used=tokens_used,
+            cost=cost,
+        )
+        await notification_svc.send_telegram(telegram_msg)
 
 
 # ─── Pydantic Models ─────────────────────────────────────────────
@@ -85,6 +125,9 @@ class TaskStatusUpdate(BaseModel):
     status: str
     result: Optional[str] = None
     tokens_used: Optional[int] = None
+
+class NotificationRead(BaseModel):
+    id: str
 
 
 @app.on_event("startup")
@@ -153,6 +196,13 @@ async def get_memories(agent_id: str):
 async def create_agent(agent_data: AgentCreate):
     """Register a new agent."""
     agent = await hermes.register_agent(agent_data.name, agent_data.role, agent_data.model)
+    # Create notification for new agent
+    await _emit_notification(
+        "agent_registered",
+        f"New Agent: {agent_data.name}",
+        f"Role: {agent_data.role} · Model: {agent_data.model}",
+        {"agent_id": agent.get("id"), "name": agent_data.name, "model": agent_data.model},
+    )
     return agent
 
 @app.get("/agents")
@@ -318,14 +368,32 @@ async def _simulate_task(task_id: str, agent_id: str, title: str):
         # Track cost in metrics collector
         agent = hermes.get_agent(agent_id)
         model = agent.get("model", "default") if agent else "default"
+        duration = random.uniform(3.0, 10.0)
         await metrics_collector.complete_task(
             task_id=task_id,
             success=True,
-            duration=random.uniform(3.0, 10.0),
+            duration=duration,
             token_usage=tokens,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             model=model,
+        )
+
+        # Create notification for completed task
+        agent_name = agent.get("name", agent_id) if agent else agent_id
+        task_metrics = await metrics_collector.get_task_metrics(task_id)
+        cost = task_metrics.get("cost", 0.0) if task_metrics else 0.0
+        await _emit_notification(
+            "task_completed",
+            f"Task Completed: {title}",
+            f"Agent: {agent_name} · Duration: {duration:.1f}s · Tokens: {tokens:,} · Cost: ${cost:.4f}",
+            {"task_id": task_id, "agent_id": agent_id, "agent_name": agent_name, "duration": duration, "tokens": tokens, "cost": cost},
+            task_title=title,
+            agent_name=agent_name,
+            duration=duration,
+            tokens_used=tokens,
+            cost=cost,
+            status="COMPLETED",
         )
 
         await hermes.log("SYSTEM", "INFO", f"Task completed: {title}")
@@ -334,7 +402,6 @@ async def _simulate_task(task_id: str, agent_id: str, title: str):
             "task": task,
         }))
     _active_sim_tasks.pop(task_id, None)
-
 
 @app.get("/tasks/history")
 async def get_task_history(
@@ -381,6 +448,16 @@ async def stop_task(task_id: str):
     # Use engine stop_task for cleanup + logging
     await hermes.stop_task(task_id)
     updated_task = task_repo.get_by_id(task_id)
+
+    # Create notification for stopped task
+    agent = hermes.get_agent(updated_task.get("agent_id"))
+    agent_name = agent.get("name", updated_task.get("agent_id")) if agent else updated_task.get("agent_id")
+    await _emit_notification(
+        "task_stopped",
+        f"Task Stopped: {updated_task.get('title', task_id)}",
+        f"Agent: {agent_name} · Stopped by user",
+        {"task_id": task_id, "agent_id": updated_task.get("agent_id")},
+    )
 
     # Broadcast both task_update (for history refresh) and task_stopped (for toast)
     await manager.broadcast(json.dumps({
@@ -488,6 +565,39 @@ async def update_model_rate(model: str, request: Request):
     return await metrics_collector.update_model_rate(
         model, data.get("input", 0.003), data.get("output", 0.015)
     )
+
+# ─── Notification Endpoints ───────────────────────────────────────
+
+@app.get("/notifications")
+async def list_notifications(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    unread_only: bool = False,
+):
+    """List notifications (paginated)."""
+    return notification_svc.get_all(page=page, page_size=page_size, unread_only=unread_only)
+
+@app.post("/notifications/read")
+async def mark_notification_read(data: NotificationRead):
+    """Mark a notification as read."""
+    result = notification_svc.mark_read(data.id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return result
+
+@app.post("/notifications/read-all")
+async def mark_all_notifications_read():
+    """Mark all notifications as read."""
+    count = notification_svc.mark_all_read()
+    return {"status": "ok", "marked": count}
+
+@app.delete("/notifications/{notification_id}")
+async def delete_notification(notification_id: str):
+    """Delete a notification."""
+    success = notification_svc.delete(notification_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"status": "deleted", "id": notification_id}
 
 # ─── WebSocket ────────────────────────────────────────────────────
 

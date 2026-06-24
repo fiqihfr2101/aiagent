@@ -13,6 +13,7 @@ import AddAgentModal from '@/components/AddAgentModal';
 import EditAgentModal from '@/components/EditAgentModal';
 import TaskDispatchModal from '@/components/TaskDispatchModal';
 import TaskHistory from '@/components/TaskHistory';
+import NotificationBell from '@/components/NotificationBell';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { Agent, LogEntry } from '@/types';
 
@@ -30,16 +31,17 @@ export default function MissionControl() {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
-  const { agents, logs, systemOnline, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate } = useWebSocket('ws://localhost:8000/ws');
-  const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
+  const { agents, logs, systemOnline, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification } = useWebSocket('ws://localhost:8000/ws');
+  const [toast, setToast] = useState<{ message: string; visible: boolean; color: string }>({ message: '', visible: false, color: 'red' });
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [newNotificationProp, setNewNotificationProp] = useState<any>(null);
 
   // Show toast when a model is updated
   useEffect(() => {
     if (lastModelUpdate) {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       const agentName = agents.find(a => a.id === lastModelUpdate.agent_id)?.name || lastModelUpdate.agent_id;
-      setToast({ message: `🔄 ${agentName} model changed → ${lastModelUpdate.model}`, visible: true });
+      setToast({ message: `🔄 ${agentName} model changed → ${lastModelUpdate.model}`, visible: true, color: 'blue' });
       toastTimeoutRef.current = setTimeout(() => {
         setToast(prev => ({ ...prev, visible: false }));
       }, 3000);
@@ -50,12 +52,40 @@ export default function MissionControl() {
   useEffect(() => {
     if (lastStoppedTask) {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-      setToast({ message: `⛔ Task stopped: "${lastStoppedTask.title}"`, visible: true });
+      setToast({ message: `⛔ Task stopped: "${lastStoppedTask.title}"`, visible: true, color: 'amber' });
       toastTimeoutRef.current = setTimeout(() => {
         setToast(prev => ({ ...prev, visible: false }));
       }, 4000);
     }
   }, [lastStoppedTask]);
+
+  // Show toast for new notifications
+  useEffect(() => {
+    if (lastNotification) {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      const colorMap: Record<string, string> = {
+        task_completed: 'green',
+        task_failed: 'red',
+        task_stopped: 'amber',
+        agent_registered: 'blue',
+        cost_alert: 'amber',
+      };
+      const iconMap: Record<string, string> = {
+        task_completed: '✅',
+        task_failed: '❌',
+        task_stopped: '⚠️',
+        agent_registered: '🆕',
+        cost_alert: '💰',
+      };
+      const color = colorMap[lastNotification.type] || 'blue';
+      const icon = iconMap[lastNotification.type] || '🔔';
+      setToast({ message: `${icon} ${lastNotification.title}`, visible: true, color });
+      setNewNotificationProp(lastNotification);
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast(prev => ({ ...prev, visible: false }));
+      }, 5000);
+    }
+  }, [lastNotification]);
 
   const handleOpenDrawer = (id: string) => {
     setSelectedAgentId(id);
@@ -126,8 +156,18 @@ export default function MissionControl() {
       {/* Toast Notification */}
       {toast.visible && (
         <div className="fixed top-4 right-4 z-[100] animate-fadein">
-          <div className="flex items-center gap-2 px-4 py-2.5 bg-bg2 border border-red-custom/40 rounded-lg shadow-[0_0_20px_rgba(255,80,80,0.15)] backdrop-blur-sm">
-            <span className="text-[11px] font-mono text-red-custom font-medium">{toast.message}</span>
+          <div className={`flex items-center gap-2 px-4 py-2.5 bg-bg2 border rounded-lg shadow-[0_0_20px_rgba(0,0,0,0.3)] backdrop-blur-sm ${
+            toast.color === 'green' ? 'border-grn-custom/40' :
+            toast.color === 'red' ? 'border-red-custom/40' :
+            toast.color === 'amber' ? 'border-amber-400/40' :
+            'border-cyan-custom/40'
+          }`}>
+            <span className={`text-[11px] font-mono font-medium ${
+              toast.color === 'green' ? 'text-grn-custom' :
+              toast.color === 'red' ? 'text-red-custom' :
+              toast.color === 'amber' ? 'text-amber-400' :
+              'text-cyan-custom'
+            }`}>{toast.message}</span>
             <button 
               onClick={() => setToast(prev => ({ ...prev, visible: false }))}
               className="text-txt3 hover:text-txt ml-1 text-[10px]"
@@ -141,7 +181,9 @@ export default function MissionControl() {
         setActiveL1={(val: string) => { setActiveL1(val); setActiveL2('overview'); }} 
         systemStatus={systemOnline ? 'ONLINE' : 'OFFLINE'}
         activeCount={`${stats.active_nodes} / 12 active`}
-      />
+      >
+        <NotificationBell newNotification={newNotificationProp} />
+      </NavBar>
 
       {activeL1 === 'overview' && (
         <Sidebar activeL2={activeL2} setActiveL2={setActiveL2} stats={stats} />
