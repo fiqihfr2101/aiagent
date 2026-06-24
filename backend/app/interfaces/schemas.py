@@ -690,3 +690,32 @@ class MemoryShare(BaseModel):
         if not AGENT_ID_PATTERN.match(v):
             raise ValueError("Agent ID contains invalid characters")
         return v
+
+
+# ─── Plugin Schemas ─────────────────────────────────────────────
+
+class PluginInstall(BaseModel):
+    """Schema for installing a plugin."""
+    plugin_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Plugin ID to install",
+    )
+    config: Optional[Dict[str, Any]] = Field(None, description="Plugin configuration")
+
+    @field_validator("plugin_id")
+    @classmethod
+    def validate_plugin_id(cls, v: str) -> str:
+        v = sanitize_plain(v)
+        if not AGENT_ID_PATTERN.match(v):
+            raise ValueError("Plugin ID contains invalid characters")
+        return v
+
+
+class PluginConfigUpdate(BaseModel):
+    """Schema for updating plugin configuration."""
+    config: Dict[str, Any] = Field(
+        ...,
+        description="Plugin configuration to update",
+    )

@@ -23,6 +23,7 @@ from app.infrastructure.notification_service import NotificationService
 from app.infrastructure.cache_service import cache
 from app.infrastructure.ws_manager import ws_manager, CHANNELS
 from app.infrastructure.workflow_repository import WorkflowRepository
+from app.infrastructure.plugin_manager import plugin_manager
 from workflows.agent_workflow import AgentTaskWorkflow
 from app.infrastructure.auth_service import (
     LoginRequest, RefreshRequest, LogoutRequest,
@@ -41,6 +42,7 @@ from app.interfaces.schemas import (
     sanitize_plain, sanitize_text,
     WorkflowCreate, WorkflowUpdate,
     MemorySearch, MemoryShare,
+    PluginInstall, PluginConfigUpdate,
 )
 from app.interfaces.config_schemas import (
     AgentConfigSave, AgentConfigClone,
@@ -148,7 +150,7 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     # Ensure JSON responses use correct Content-Type
-    if request.url.path.startswith("/api/") or request.url.path.startswith("/auth/") or request.url.path.startswith("/agents") or request.url.path.startswith("/tasks") or request.url.path.startswith("/metrics") or request.url.path.startswith("/notifications") or request.url.path.startswith("/messages"):
+    if request.url.path.startswith("/api/") or request.url.path.startswith("/auth/") or request.url.path.startswith("/agents") or request.url.path.startswith("/tasks") or request.url.path.startswith("/metrics") or request.url.path.startswith("/notifications") or request.url.path.startswith("/messages") or request.url.path.startswith("/plugins") or request.url.path.startswith("/marketplace"):
         if "content-type" not in response.headers:
             response.headers["Content-Type"] = "application/json; charset=utf-8"
     return response
@@ -1361,6 +1363,76 @@ async def get_workflow_versions(wf_id: str):
         raise HTTPException(status_code=404, detail="Workflow not found")
     versions = workflow_repo.get_versions(wf_id)
     return {"versions": versions}
+
+
+# ─── Plugin Marketplace Endpoints ──────────────────────────────────
+
+@app.get("/marketplace")
+async def list_marketplace(
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+):
+    """List all available plugins in the marketplace."""
+    return plugin_manager.get_marketplace(category=category, search=search)
+
+
+@app.get("/plugins")
+async def list_plugins():
+    """List all installed plugins."""
+    return plugin_manager.get_installed()
+
+
+@app.post("/plugins")
+async def install_plugin(data: PluginInstall):
+    """Install a plugin from the marketplace."""
+    result = plugin_manager.install(data.plugin_id, data.config)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    await ws_manager.broadcast(json.dumps({
+        "type": "plugin_installed",
+        "plugin": result,
+    }))
+    return result
+
+
+@app.put("/plugins/{plugin_id}")
+async def update_plugin_config(plugin_id: str, data: PluginConfigUpdate):
+    """Update plugin configuration."""
+    result = plugin_manager.update_config(plugin_id, data.config)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.delete("/plugins/{plugin_id}")
+async def uninstall_plugin(plugin_id: str):
+    """Uninstall a plugin."""
+    result = plugin_manager.uninstall(plugin_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    await ws_manager.broadcast(json.dumps({
+        "type": "plugin_uninstalled",
+        "plugin_id": plugin_id,
+    }))
+    return result
+
+
+@app.post("/plugins/{plugin_id}/enable")
+async def enable_plugin(plugin_id: str):
+    """Enable an installed plugin."""
+    result = plugin_manager.enable(plugin_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.post("/plugins/{plugin_id}/disable")
+async def disable_plugin(plugin_id: str):
+    """Disable an installed plugin."""
+    result = plugin_manager.disable(plugin_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 if __name__ == "__main__":

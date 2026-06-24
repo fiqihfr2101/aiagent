@@ -23,6 +23,8 @@ const TaskHistory = lazy(() => import('@/components/TaskHistory'));
 const TaskLogs = lazy(() => import('@/components/TaskLogs'));
 const MessageCenter = lazy(() => import('@/components/MessageCenter'));
 const WorkflowBuilder = lazy(() => import('@/components/WorkflowBuilder'));
+const Marketplace = lazy(() => import('@/components/Marketplace'));
+const PluginManager = lazy(() => import('@/components/PluginManager'));
 
 // Loading fallback for lazy components
 const ComponentLoader = () => (
@@ -44,6 +46,7 @@ export default function MissionControl() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [pluginsTab, setPluginsTab] = useState<'marketplace' | 'installed'>('marketplace');
 
   const { agents, logs, systemOnline, connectionStatus, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification, lastNewLog, lastAgentMessage } = useWebSocket('ws://localhost:8000/ws', {
     channels: ['agents', 'tasks', 'metrics', 'logs', 'notifications', 'system', 'messages'],
@@ -405,6 +408,34 @@ export default function MissionControl() {
           <div className="view on h-full animate-fadein">
             <Suspense fallback={<ComponentLoader />}>
               <MessageCenter agents={agents} lastAgentMessage={lastAgentMessage} />
+            </Suspense>
+          </div>
+        )}
+
+
+        {activeL1 === 'plugins' && (
+          <div className="view on h-full animate-fadein">
+            <div className="flex-shrink-0 h-10 bg-bg2 border-b border-border-custom flex items-center px-4 gap-0">
+              {(['marketplace', 'installed'] as const).map(tab => (
+                <div
+                  key={tab}
+                  onClick={() => setPluginsTab(tab)}
+                  className={`px-3 py-1 rounded text-[10px] font-medium cursor-pointer tracking-[0.06em] uppercase transition-colors ${
+                    pluginsTab === tab
+                      ? 'text-cyan-custom bg-cyan-custom/10 border border-cyan-custom/20'
+                      : 'text-txt3 hover:text-txt2'
+                  }`}
+                >
+                  {tab === 'marketplace' ? '🧩 Marketplace' : '⚙ Installed'}
+                </div>
+              ))}
+            </div>
+            <Suspense fallback={<ComponentLoader />}>
+              {pluginsTab === 'marketplace' ? (
+                <Marketplace onInstall={() => setPluginsTab('installed')} />
+              ) : (
+                <PluginManager />
+              )}
             </Suspense>
           </div>
         )}
