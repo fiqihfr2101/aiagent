@@ -2,13 +2,17 @@ import sqlite3
 import uuid
 import datetime
 from typing import Optional, List, Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class TaskRepository:
     """SQLite-backed task storage with CRUD operations and filters."""
 
-    def __init__(self, db_path: str = "hermes_agents.db"):
+    def __init__(self, db_path: str = "hermes_agents.db", log_repo=None):
         self.db_path = db_path
+        self._log_repo = log_repo
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -49,7 +53,10 @@ class TaskRepository:
                 (task_id, agent_id, title, priority.upper(), "QUEUED", now, workflow_id)
             )
             conn.commit()
-            return self._row_to_dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
+            task = self._row_to_dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
+            self._add_log(task_id, agent_id, "INFO", f"Task created: {title} (priority: {priority.upper()})")
+            logger.info("Task created: %s [%s] agent=%s", title, task_id, agent_id)
+            return task
         finally:
             conn.close()
 
@@ -99,7 +106,11 @@ class TaskRepository:
             values = list(updates.values()) + [task_id]
             conn.execute(f"UPDATE tasks SET {set_clause} WHERE id = ?", values)
             conn.commit()
-            return self.get_by_id(task_id)
+            updated = self.get_by_id(task_id)
+            if updated:
+                self._add_log(task_id, updated.get("agent_id"), "INFO", f"Task status → {status.upper()}")
+                logger.info("Task %s status → %s", task_id, status.upper())
+            return updated
         finally:
             conn.close()
 
@@ -182,3 +193,11 @@ class TaskRepository:
             "tokens_used": d.get("tokens_used", 0),
             "workflow_id": d.get("workflow_id"),
         }
+
+    def _add_log(self, task_id: str, agent_id: str, level: str, message: str):
+        """Add a log entry for this task if a log repository is configured."""
+        if self._log_repo:
+            try:
+                self._log_repo.create(message=message, level=level, task_id=task_id, agent_id=agent_id)
+            except Exception as e:
+                logger.warning("Failed to write task log: %s", e)

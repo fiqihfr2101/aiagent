@@ -13,9 +13,10 @@ import AddAgentModal from '@/components/AddAgentModal';
 import EditAgentModal from '@/components/EditAgentModal';
 import TaskDispatchModal from '@/components/TaskDispatchModal';
 import TaskHistory from '@/components/TaskHistory';
+import TaskLogs from '@/components/TaskLogs';
 import NotificationBell from '@/components/NotificationBell';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import { Agent, LogEntry } from '@/types';
+import { Agent, LogEntry, TaskLog } from '@/types';
 
 export default function MissionControl() {
   const [activeL1, setActiveL1] = useState('overview');
@@ -31,7 +32,9 @@ export default function MissionControl() {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
-  const { agents, logs, systemOnline, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification } = useWebSocket('ws://localhost:8000/ws');
+  const { agents, logs, systemOnline, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification, lastNewLog } = useWebSocket('ws://localhost:8000/ws');
+  const [globalLogs, setGlobalLogs] = useState<TaskLog[]>([]);
+  const [globalLogsLoaded, setGlobalLogsLoaded] = useState(false);
   const [toast, setToast] = useState<{ message: string; visible: boolean; color: string }>({ message: '', visible: false, color: 'red' });
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [newNotificationProp, setNewNotificationProp] = useState<any>(null);
@@ -86,6 +89,23 @@ export default function MissionControl() {
       }, 5000);
     }
   }, [lastNotification]);
+
+  // Accumulate real-time structured logs
+  useEffect(() => {
+    if (lastNewLog) {
+      setGlobalLogs((prev) => [lastNewLog, ...prev].slice(0, 500));
+    }
+  }, [lastNewLog]);
+
+  // Fetch all logs when Logs tab is first opened
+  useEffect(() => {
+    if (activeL2 === 'logs' && !globalLogsLoaded) {
+      fetch('http://localhost:8000/logs?limit=200')
+        .then(res => res.ok ? res.json() : null)
+        .then(data => { if (data) { setGlobalLogs(data.logs || []); setGlobalLogsLoaded(true); } })
+        .catch(err => console.error('Failed to fetch logs:', err));
+    }
+  }, [activeL2, globalLogsLoaded]);
 
   const handleOpenDrawer = (id: string) => {
     setSelectedAgentId(id);
@@ -276,6 +296,28 @@ export default function MissionControl() {
         {activeL1 === 'overview' && activeL2 === 'tasks' && (
           <div className="view on h-full animate-fadein">
             <TaskHistory agents={agents} />
+          </div>
+        )}
+
+        {activeL1 === 'overview' && activeL2 === 'logs' && (
+          <div className="view on h-full animate-fadein p-4">
+            <div className="h-full flex flex-col">
+              <div className="flex-shrink-0 text-[9px] text-txt3 tracking-[0.18em] uppercase mb-3 flex items-center gap-2">
+                Structured Logs · Real-time
+                <div className="flex-1 h-px bg-border-custom"></div>
+                <span className="text-[10px] text-txt2 font-mono">{globalLogs.length} entries</span>
+              </div>
+              <div className="flex-1 min-h-0">
+                <TaskLogs
+                  logs={globalLogs}
+                  maxHeight="h-full"
+                  showSearch
+                  showCopy
+                  showLevelFilter
+                  autoScroll={false}
+                />
+              </div>
+            </div>
           </div>
         )}
 

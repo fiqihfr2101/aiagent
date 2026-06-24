@@ -1,6 +1,6 @@
 
 import { useEffect, useRef, useState } from 'react';
-import { Agent, FeedItem, LogEntry, TaskCounts } from '../types';
+import { Agent, FeedItem, LogEntry, TaskCounts, TaskLog } from '../types';
 
 export interface StoppedTaskEvent {
   id: string;
@@ -19,6 +19,7 @@ export const useWebSocket = (url: string) => {
   const [stoppingAgentIds, setStoppingAgentIds] = useState<Set<string>>(new Set());
   const [lastModelUpdate, setLastModelUpdate] = useState<{ agent_id: string; model: string } | null>(null);
   const [lastNotification, setLastNotification] = useState<any>(null);
+  const [lastNewLog, setLastNewLog] = useState<TaskLog | null>(null);
   
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -69,6 +70,8 @@ export const useWebSocket = (url: string) => {
           });
         } else if (data.type === 'new_notification') {
           setLastNotification(data.notification);
+        } else if (data.type === 'new_log') {
+          setLastNewLog(data.log);
         }
       };
 
@@ -112,5 +115,5 @@ export const useWebSocket = (url: string) => {
     setStoppingAgentIds(prev => new Set(prev).add(agentId));
   };
 
-  return { agents, logs, systemOnline, stats, taskCounts, lastTaskUpdate, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification };
+  return { agents, logs, systemOnline, stats, taskCounts, lastTaskUpdate, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification, lastNewLog };
 };

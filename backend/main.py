@@ -7,18 +7,30 @@ import uvicorn
 import json
 import asyncio
 import os
+import uuid
+import logging
+import time
 from dotenv import load_dotenv
 
 from hermes_engine import HermesEngine
 from app.infrastructure.memory_manager import MemoryManager
 from app.infrastructure.metrics_collector import MetricsCollector
 from app.infrastructure.task_repository import TaskRepository
+from app.infrastructure.log_repository import LogRepository
 from app.infrastructure.agent_repository import VALID_MODELS
 from app.infrastructure.notification_service import NotificationService
 from workflows.agent_workflow import AgentTaskWorkflow
 
 # Load environment variables
 load_dotenv()
+
+# ─── Structured Logging ──────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("hermes")
 
 app = FastAPI()
 
@@ -30,6 +42,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Request ID Middleware ────────────────────────────────────────
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Attach a unique request ID to every request for traceability."""
+    request_id = request.headers.get("X-Request-ID", uuid.uuid4().hex[:12])
+    request.state.request_id = request_id
+    start_time = time.time()
+    response = await call_next(request)
+    duration_ms = round((time.time() - start_time) * 1000, 1)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "%s %s → %s (%.1fms) [req=%s]",
+        request.method, request.url.path, response.status_code, duration_ms, request_id,
+    )
+    return response
 
 # Store active connections
 class ConnectionManager:
@@ -55,7 +83,8 @@ manager = ConnectionManager()
 metrics_collector = MetricsCollector()
 hermes = HermesEngine(manager.broadcast, metrics_collector)
 memory = MemoryManager()
-task_repo = TaskRepository()
+log_repo = LogRepository()
+task_repo = TaskRepository(log_repo=log_repo)
 notification_svc = NotificationService()
 temporal_client = None
 # Track active simulated tasks so they can be cancelled
@@ -140,9 +169,9 @@ async def startup_event():
     temporal_address = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
     try:
         temporal_client = await Client.connect(temporal_address)
-        print(f"Connected to Temporal at {temporal_address}")
+        logger.info("Connected to Temporal at %s", temporal_address)
     except Exception as e:
-        print(f"Warning: Could not connect to Temporal: {e}")
+        logger.warning("Could not connect to Temporal: %s", e)
 
     # Register built-in agents with metrics
     for agent in hermes.agents:
@@ -328,7 +357,7 @@ async def dispatch_task(task_data: TaskCreate):
             task["status"] = "RUNNING"
             task["workflow_id"] = workflow_id
         except Exception as e:
-            print(f"Temporal workflow start failed: {e}")
+            logger.error("Temporal workflow start failed: %s", e)
             # Task remains QUEUED - can be retried
     else:
         # No Temporal - simulate task execution
@@ -354,14 +383,18 @@ async def _simulate_task(task_id: str, agent_id: str, title: str):
     import random
     # Store ref so we can cancel on stop
     _active_sim_tasks[task_id] = asyncio.current_task()
+    log_repo.create(f"Task execution started: {title}", level="INFO", task_id=task_id, agent_id=agent_id)
+    log_repo.create(f"Connecting to agent model...", level="DEBUG", task_id=task_id, agent_id=agent_id)
     await asyncio.sleep(random.randint(3, 10))
     tokens = random.randint(100, 5000)
     input_tokens = random.randint(50, tokens // 2)
     output_tokens = tokens - input_tokens
+    log_repo.create(f"Generated {tokens} tokens (input: {input_tokens}, output: {output_tokens})", level="DEBUG", task_id=task_id, agent_id=agent_id)
     result = json.dumps({"output": f"Simulated completion of: {title}"})
     # Only complete if not already stopped
     current = task_repo.get_by_id(task_id)
     if current and current["status"] == "RUNNING":
+        log_repo.create(f"Task processing complete, writing results...", level="INFO", task_id=task_id, agent_id=agent_id)
         task_repo.update_status(task_id, "COMPLETED", result=result, tokens_used=tokens)
         task = task_repo.get_by_id(task_id)
 
@@ -396,6 +429,7 @@ async def _simulate_task(task_id: str, agent_id: str, title: str):
             status="COMPLETED",
         )
 
+        log_repo.create(f"Task completed successfully. Cost: ${cost:.4f}", level="INFO", task_id=task_id, agent_id=agent_id)
         await hermes.log("SYSTEM", "INFO", f"Task completed: {title}")
         await manager.broadcast(json.dumps({
             "type": "task_update",
@@ -436,6 +470,7 @@ async def stop_task(task_id: str):
     sim_task = _active_sim_tasks.pop(task_id, None)
     if sim_task and not sim_task.done():
         sim_task.cancel()
+        log_repo.create("Task execution cancelled by user", level="WARNING", task_id=task_id, agent_id=task.get("agent_id"))
 
     # Try to signal Temporal workflow to cancel
     if temporal_client and task.get("workflow_id"):
@@ -443,7 +478,7 @@ async def stop_task(task_id: str):
             handle = temporal_client.get_workflow_handle(task["workflow_id"])
             await handle.signal(AgentTaskWorkflow.cancel_task)
         except Exception as e:
-            print(f"Failed to signal Temporal workflow: {e}")
+            logger.error("Failed to signal Temporal workflow: %s", e)
 
     # Use engine stop_task for cleanup + logging
     await hermes.stop_task(task_id)
@@ -504,6 +539,54 @@ async def update_task_status(task_id: str, data: TaskStatusUpdate):
 async def get_task_counts():
     """Get active task counts per agent."""
     return task_repo.get_all_active_task_counts()
+
+
+# ─── Log Endpoints ───────────────────────────────────────────────
+
+class LogCreate(BaseModel):
+    message: str
+    level: str = "INFO"
+    task_id: Optional[str] = None
+    agent_id: Optional[str] = None
+
+@app.get("/tasks/{task_id}/logs")
+async def get_task_logs(task_id: str, limit: int = Query(100, ge=1, le=500)):
+    """Get logs for a specific task."""
+    task = task_repo.get_by_id(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return log_repo.get_for_task(task_id, limit=limit)
+
+@app.get("/logs")
+async def get_all_logs(
+    level: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """Get all logs with optional filters."""
+    return log_repo.get_all(
+        task_id=task_id, agent_id=agent_id, level=level, limit=limit, offset=offset
+    )
+
+@app.post("/logs")
+async def create_log(data: LogCreate, request: Request):
+    """Add a log entry."""
+    request_id = getattr(request.state, "request_id", None)
+    entry = log_repo.create(
+        message=data.message,
+        level=data.level,
+        task_id=data.task_id,
+        agent_id=data.agent_id,
+        request_id=request_id,
+    )
+    # Broadcast to WebSocket clients
+    await manager.broadcast(json.dumps({
+        "type": "new_log",
+        "log": entry,
+    }))
+    return entry
 
 
 # ─── Metrics Endpoints ────────────────────────────────────────────
@@ -661,7 +744,7 @@ async def metrics_broadcast_loop():
                 "counts": counts,
             }))
         except Exception as e:
-            print(f"Metrics broadcast error: {e}")
+            logger.error("Metrics broadcast error: %s", e)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

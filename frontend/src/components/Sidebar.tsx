@@ -21,6 +21,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeL2, setActiveL2, stats }) => {
     { id: 'console', label: 'Console', icon: (
       <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>
     )},
+    { id: 'logs', label: 'Logs', icon: (
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg>
+    )},
     { id: 'analytics', label: 'Diagnostics', icon: (
       <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><path d="M3 3v18h18M7 14l3-4 3 3 4-6"/></svg>
     )},

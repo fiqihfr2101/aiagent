@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { DispatchTask, TaskHistoryResponse, TaskStatus, Agent } from '@/types';
+import { DispatchTask, TaskHistoryResponse, TaskStatus, Agent, TaskLog } from '@/types';
+import TaskLogs from './TaskLogs';
 
 interface TaskHistoryProps {
   agents: Agent[];
@@ -30,6 +31,9 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
   const [filterStatus, setFilterStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [stoppingTaskId, setStoppingTaskId] = useState<string | null>(null);
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [taskLogs, setTaskLogs] = useState<Record<string, TaskLog[]>>({});
+  const [loadingLogs, setLoadingLogs] = useState<string | null>(null);
 
   const fetchHistory = useCallback(async () => {
     setLoading(true);
@@ -91,6 +95,28 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
       hour: '2-digit',
       minute: '2-digit',
     });
+  };
+
+  const toggleExpand = async (taskId: string) => {
+    if (expandedTaskId === taskId) {
+      setExpandedTaskId(null);
+      return;
+    }
+    setExpandedTaskId(taskId);
+    if (!taskLogs[taskId]) {
+      setLoadingLogs(taskId);
+      try {
+        const res = await fetch(`http://localhost:8000/tasks/${taskId}/logs`);
+        if (res.ok) {
+          const data = await res.json();
+          setTaskLogs((prev) => ({ ...prev, [taskId]: data }));
+        }
+      } catch (err) {
+        console.error('Failed to fetch task logs:', err);
+      } finally {
+        setLoadingLogs(null);
+      }
+    }
   };
 
   const handleStopTask = async (taskId: string, taskTitle: string) => {
@@ -168,58 +194,92 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
                 <th className="text-right px-4 py-2 font-medium">Tokens</th>
                 <th className="text-left px-4 py-2 font-medium">Created</th>
                 <th className="px-4 py-2 font-medium"></th>
+                <th className="px-4 py-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
               {tasks.map((task) => {
                 const sc = statusColors[task.status] || statusColors.QUEUED;
+                const isExpanded = expandedTaskId === task.id;
                 return (
-                  <tr key={task.id} className="border-b border-border-custom/50 hover:bg-white/[0.02] transition-colors">
-                    <td className="px-4 py-2.5">
-                      <div className="text-[11px] text-txt font-medium max-w-[200px] truncate">{task.title}</div>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className="text-[10px] text-txt2 font-mono">{getAgentName(task.agent_id)}</span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className={`text-[10px] font-mono font-bold ${priorityColors[task.priority] || 'text-txt3'}`}>
-                        {task.priority}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className={`inline-flex items-center gap-1 px-2 py-[2px] rounded-full text-[8px] font-bold font-mono border ${sc.bg} ${sc.text} ${sc.border}`}>
-                        {(task.status === 'RUNNING') && (
-                          <span className="w-1 h-1 rounded-full bg-current animate-pulse" />
-                        )}
-                        {task.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <span className="text-[10px] text-txt2 font-mono">{formatDuration(task.duration)}</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <span className="text-[10px] text-txt2 font-mono">{formatTokens(task.tokens_used)}</span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span className="text-[9px] text-txt3 font-mono">{formatDate(task.created_at)}</span>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {(task.status === 'QUEUED' || task.status === 'RUNNING') && (
+                  <React.Fragment key={task.id}>
+                    <tr className={`border-b border-border-custom/50 hover:bg-white/[0.02] transition-colors ${isExpanded ? 'bg-white/[0.02]' : ''}`}>
+                      <td className="px-4 py-2.5">
+                        <div className="text-[11px] text-txt font-medium max-w-[200px] truncate">{task.title}</div>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className="text-[10px] text-txt2 font-mono">{getAgentName(task.agent_id)}</span>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={`text-[10px] font-mono font-bold ${priorityColors[task.priority] || 'text-txt3'}`}>
+                          {task.priority}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={`inline-flex items-center gap-1 px-2 py-[2px] rounded-full text-[8px] font-bold font-mono border ${sc.bg} ${sc.text} ${sc.border}`}>
+                          {(task.status === 'RUNNING') && (
+                            <span className="w-1 h-1 rounded-full bg-current animate-pulse" />
+                          )}
+                          {task.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="text-[10px] text-txt2 font-mono">{formatDuration(task.duration)}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="text-[10px] text-txt2 font-mono">{formatTokens(task.tokens_used)}</span>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className="text-[9px] text-txt3 font-mono">{formatDate(task.created_at)}</span>
+                      </td>
+                      <td className="px-4 py-2.5">
                         <button
-                          onClick={() => handleStopTask(task.id, task.title)}
-                          disabled={stoppingTaskId === task.id}
-                          className={`text-[8px] font-mono border px-2 py-[2px] rounded transition-colors ${
-                            stoppingTaskId === task.id
-                              ? 'text-amb-custom border-amb-custom/50 animate-pulse cursor-wait'
-                              : 'text-red-custom/70 hover:text-red-custom border-red-custom/30 hover:border-red-custom/50'
-                          }`}
-                          title="Stop task"
+                          onClick={() => toggleExpand(task.id)}
+                          className="text-[9px] font-mono text-txt3 hover:text-cyan-custom transition-colors px-1"
+                          title="View execution logs"
                         >
-                          {stoppingTaskId === task.id ? 'STOPPING...' : 'STOP'}
+                          {isExpanded ? '▼' : '▶'} LOGS
                         </button>
-                      )}
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {(task.status === 'QUEUED' || task.status === 'RUNNING') && (
+                          <button
+                            onClick={() => handleStopTask(task.id, task.title)}
+                            disabled={stoppingTaskId === task.id}
+                            className={`text-[8px] font-mono border px-2 py-[2px] rounded transition-colors ${
+                              stoppingTaskId === task.id
+                                ? 'text-amb-custom border-amb-custom/50 animate-pulse cursor-wait'
+                                : 'text-red-custom/70 hover:text-red-custom border-red-custom/30 hover:border-red-custom/50'
+                            }`}
+                            title="Stop task"
+                          >
+                            {stoppingTaskId === task.id ? 'STOPPING...' : 'STOP'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={9} className="px-4 py-3 bg-bg3/30">
+                          {loadingLogs === task.id ? (
+                            <div className="flex items-center justify-center py-4">
+                              <div className="w-4 h-4 border-2 border-cyan-custom/30 border-t-cyan-custom rounded-full animate-spin" />
+                            </div>
+                          ) : taskLogs[task.id] && taskLogs[task.id].length > 0 ? (
+                            <TaskLogs
+                              logs={taskLogs[task.id]}
+                              maxHeight="max-h-48"
+                              showSearch={false}
+                              showLevelFilter={false}
+                              compact
+                            />
+                          ) : (
+                            <div className="text-[10px] text-txt3 italic text-center py-2">// No execution logs for this task</div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>

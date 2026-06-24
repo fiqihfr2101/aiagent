@@ -77,3 +77,21 @@ export interface TaskHistoryResponse {
 export interface TaskCounts {
   [agent_id: string]: number;
 }
+
+// ─── Structured Log Types ───────────────────────────────────────
+export interface TaskLog {
+  id: string;
+  task_id: string | null;
+  agent_id: string | null;
+  level: 'INFO' | 'WARNING' | 'ERROR' | 'DEBUG';
+  message: string;
+  timestamp: string;
+  request_id?: string | null;
+}
+
+export interface TaskLogsResponse {
+  logs: TaskLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}
