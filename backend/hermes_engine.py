@@ -117,6 +117,16 @@ class HermesEngine:
         await self.log("SYSTEM", "INFO", f"Task submitted: {title} → {agent_id}")
         return task
 
+    async def stop_task(self, task_id: str):
+        """Stop a task — update status in DB and log."""
+        from app.infrastructure.task_repository import TaskRepository
+        repo = TaskRepository()
+        task = repo.get_by_id(task_id)
+        if task:
+            repo.update_status(task_id, "STOPPED")
+            await self.log("SYSTEM", "INFO", f"Task stopped: {task['title']} (cleanup performed)")
+        return task
+
     async def complete_task(self, task_id: str, success: bool = True, duration: float = 0.0, token_usage: int = 0):
         """Mark a task as completed and update metrics."""
         for task in self.tasks:

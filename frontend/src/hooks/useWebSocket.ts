@@ -2,13 +2,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { Agent, FeedItem, LogEntry, TaskCounts } from '../types';
 
+export interface StoppedTaskEvent {
+  id: string;
+  agent_id: string;
+  title: string;
+}
+
 export const useWebSocket = (url: string) => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [systemOnline, setSystemOnline] = useState(false);
   const [stats, setStats] = useState({ active_nodes: 0, running: 0, sleeping: 0, offline: 0 });
-  const [taskCounts, setTaskCounts] = useState<TaskCounts>({});
+  const [taskCounts, setTaskCounts] = useState<TaskCounts>({})
   const [lastTaskUpdate, setLastTaskUpdate] = useState<any>(null);
+  const [lastStoppedTask, setLastStoppedTask] = useState<StoppedTaskEvent | null>(null);
+  const [stoppingAgentIds, setStoppingAgentIds] = useState<Set<string>>(new Set());
   
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -41,6 +49,19 @@ export const useWebSocket = (url: string) => {
           setLastTaskUpdate(data.task);
           // Refresh task counts on task update
           fetchTaskCounts();
+        } else if (data.type === 'task_stopped') {
+          const stoppedTask = data.task;
+          setLastStoppedTask({
+            id: stoppedTask.id,
+            agent_id: stoppedTask.agent_id,
+            title: stoppedTask.title,
+          });
+          // Clear stopping state for this agent after a brief delay
+          setStoppingAgentIds(prev => {
+            const next = new Set(prev);
+            next.delete(stoppedTask.agent_id);
+            return next;
+          });
         }
       };
 
@@ -80,5 +101,9 @@ export const useWebSocket = (url: string) => {
     fetchTaskCounts();
   }, []);
 
-  return { agents, logs, systemOnline, stats, taskCounts, lastTaskUpdate };
+  const markAgentStopping = (agentId: string) => {
+    setStoppingAgentIds(prev => new Set(prev).add(agentId));
+  };
+
+  return { agents, logs, systemOnline, stats, taskCounts, lastTaskUpdate, lastStoppedTask, stoppingAgentIds, markAgentStopping };
 };

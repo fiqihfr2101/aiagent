@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import NavBar from '@/components/NavBar';
 import Sidebar from '@/components/Sidebar';
 import AgentCard from '@/components/AgentCard';
@@ -29,7 +29,20 @@ export default function MissionControl() {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
-  const { agents, logs, systemOnline, stats, taskCounts } = useWebSocket('ws://localhost:8000/ws');
+  const { agents, logs, systemOnline, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping } = useWebSocket('ws://localhost:8000/ws');
+  const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Show toast when a task is stopped
+  useEffect(() => {
+    if (lastStoppedTask) {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      setToast({ message: `⛔ Task stopped: "${lastStoppedTask.title}"`, visible: true });
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast(prev => ({ ...prev, visible: false }));
+      }, 4000);
+    }
+  }, [lastStoppedTask]);
 
   const handleOpenDrawer = (id: string) => {
     setSelectedAgentId(id);
@@ -88,6 +101,19 @@ export default function MissionControl() {
 
   return (
     <div className="shell dotgrid flex flex-col h-screen overflow-hidden bg-bg text-txt font-sans selection:bg-cyan-custom/30">
+
+      {/* Toast Notification */}
+      {toast.visible && (
+        <div className="fixed top-4 right-4 z-[100] animate-fadein">
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-bg2 border border-red-custom/40 rounded-lg shadow-[0_0_20px_rgba(255,80,80,0.15)] backdrop-blur-sm">
+            <span className="text-[11px] font-mono text-red-custom font-medium">{toast.message}</span>
+            <button 
+              onClick={() => setToast(prev => ({ ...prev, visible: false }))}
+              className="text-txt3 hover:text-txt ml-1 text-[10px]"
+            >✕</button>
+          </div>
+        </div>
+      )}
       
       <NavBar 
         activeL1={activeL1} 
@@ -168,6 +194,7 @@ export default function MissionControl() {
                     onEdit={handleEditAgent}
                     onDelete={handleDeleteAgent}
                     taskCount={taskCounts[agent.id] || 0}
+                    isStopping={stoppingAgentIds.has(agent.id)}
                   />
                 ))}
               </div>

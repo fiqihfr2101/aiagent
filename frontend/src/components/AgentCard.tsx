@@ -8,9 +8,10 @@ interface AgentCardProps {
   onEdit: (agent: Agent) => void;
   onDelete: (id: string) => void;
   taskCount?: number;
+  isStopping?: boolean;
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, onEdit, onDelete, taskCount = 0 }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, onEdit, onDelete, taskCount = 0, isStopping = false }) => {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return 'var(--cyan)';
@@ -49,6 +50,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, onEdit, onDelete,
         <div className="absolute top-2 right-2 z-20 flex items-center gap-1 px-1.5 py-[2px] rounded-full bg-cyan-custom/20 border border-cyan-custom/40">
           <span className="w-1.5 h-1.5 rounded-full bg-cyan-custom animate-pulse" />
           <span className="text-[8px] font-mono font-bold text-cyan-custom">{taskCount}</span>
+        </div>
+      )}
+      {/* Stopping indicator */}
+      {isStopping && (
+        <div className="absolute top-2 left-2 z-20 flex items-center gap-1 px-1.5 py-[2px] rounded-full bg-amb-custom/20 border border-amb-custom/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-amb-custom animate-pulse" />
+          <span className="text-[8px] font-mono font-bold text-amb-custom">STOPPING</span>
         </div>
       )}
 

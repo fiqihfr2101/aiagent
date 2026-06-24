@@ -55,6 +55,8 @@ hermes = HermesEngine(manager.broadcast, metrics_collector)
 memory = MemoryManager()
 task_repo = TaskRepository()
 temporal_client = None
+# Track active simulated tasks so they can be cancelled
+_active_sim_tasks: dict[str, asyncio.Task] = {}
 
 
 # ─── Pydantic Models ─────────────────────────────────────────────
@@ -255,17 +257,22 @@ async def dispatch_task(task_data: TaskCreate):
 async def _simulate_task(task_id: str, agent_id: str, title: str):
     """Simulate task execution when Temporal is not available."""
     import random
+    # Store ref so we can cancel on stop
+    _active_sim_tasks[task_id] = asyncio.current_task()
     await asyncio.sleep(random.randint(3, 10))
     tokens = random.randint(100, 5000)
     result = json.dumps({"output": f"Simulated completion of: {title}"})
-    task_repo.update_status(task_id, "COMPLETED", result=result, tokens_used=tokens)
-    
-    task = task_repo.get_by_id(task_id)
-    await hermes.log("SYSTEM", "INFO", f"Task completed: {title}")
-    await manager.broadcast(json.dumps({
-        "type": "task_update",
-        "task": task,
-    }))
+    # Only complete if not already stopped
+    current = task_repo.get_by_id(task_id)
+    if current and current["status"] == "RUNNING":
+        task_repo.update_status(task_id, "COMPLETED", result=result, tokens_used=tokens)
+        task = task_repo.get_by_id(task_id)
+        await hermes.log("SYSTEM", "INFO", f"Task completed: {title}")
+        await manager.broadcast(json.dumps({
+            "type": "task_update",
+            "task": task,
+        }))
+    _active_sim_tasks.pop(task_id, None)
 
 
 @app.get("/tasks/history")
@@ -297,6 +304,11 @@ async def stop_task(task_id: str):
     if task["status"] not in ("QUEUED", "RUNNING"):
         raise HTTPException(status_code=400, detail=f"Cannot stop task with status: {task['status']}")
 
+    # Cancel simulated task if active
+    sim_task = _active_sim_tasks.pop(task_id, None)
+    if sim_task and not sim_task.done():
+        sim_task.cancel()
+
     # Try to signal Temporal workflow to cancel
     if temporal_client and task.get("workflow_id"):
         try:
@@ -305,12 +317,17 @@ async def stop_task(task_id: str):
         except Exception as e:
             print(f"Failed to signal Temporal workflow: {e}")
 
-    task_repo.update_status(task_id, "STOPPED")
+    # Use engine stop_task for cleanup + logging
+    await hermes.stop_task(task_id)
     updated_task = task_repo.get_by_id(task_id)
 
-    await hermes.log("SYSTEM", "INFO", f"Task stopped: {task['title']}")
+    # Broadcast both task_update (for history refresh) and task_stopped (for toast)
     await manager.broadcast(json.dumps({
         "type": "task_update",
+        "task": updated_task,
+    }))
+    await manager.broadcast(json.dumps({
+        "type": "task_stopped",
         "task": updated_task,
     }))
 

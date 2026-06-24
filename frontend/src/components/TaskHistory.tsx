@@ -12,7 +12,7 @@ const statusColors: Record<TaskStatus, { bg: string; text: string; border: strin
   RUNNING: { bg: 'bg-cyan-custom/10', text: 'text-cyan-custom', border: 'border-cyan-custom/30' },
   COMPLETED: { bg: 'bg-grn-custom/10', text: 'text-grn-custom', border: 'border-grn-custom/30' },
   FAILED: { bg: 'bg-red-custom/10', text: 'text-red-custom', border: 'border-red-custom/30' },
-  STOPPED: { bg: 'bg-amb-custom/10', text: 'text-amb-custom', border: 'border-amb-custom/30' },
+  STOPPED: { bg: 'bg-red-custom/10', text: 'text-red-custom', border: 'border-red-custom/30' },
 };
 
 const priorityColors: Record<string, string> = {
@@ -29,6 +29,7 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
   const [filterAgent, setFilterAgent] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [loading, setLoading] = useState(false);
+  const [stoppingTaskId, setStoppingTaskId] = useState<string | null>(null);
 
   const fetchHistory = useCallback(async () => {
     setLoading(true);
@@ -92,7 +93,9 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
     });
   };
 
-  const handleStopTask = async (taskId: string) => {
+  const handleStopTask = async (taskId: string, taskTitle: string) => {
+    if (!confirm(`Stop task "${taskTitle}"?\n\nThis will immediately halt execution.`)) return;
+    setStoppingTaskId(taskId);
     try {
       const res = await fetch(`http://localhost:8000/tasks/${taskId}/stop`, { method: 'POST' });
       if (res.ok) {
@@ -100,6 +103,8 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
       }
     } catch (err) {
       console.error('Failed to stop task:', err);
+    } finally {
+      setStoppingTaskId(null);
     }
   };
 
@@ -201,11 +206,16 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
                     <td className="px-4 py-2.5">
                       {(task.status === 'QUEUED' || task.status === 'RUNNING') && (
                         <button
-                          onClick={() => handleStopTask(task.id)}
-                          className="text-[8px] font-mono text-red-custom/70 hover:text-red-custom border border-red-custom/30 hover:border-red-custom/50 px-2 py-[2px] rounded transition-colors"
+                          onClick={() => handleStopTask(task.id, task.title)}
+                          disabled={stoppingTaskId === task.id}
+                          className={`text-[8px] font-mono border px-2 py-[2px] rounded transition-colors ${
+                            stoppingTaskId === task.id
+                              ? 'text-amb-custom border-amb-custom/50 animate-pulse cursor-wait'
+                              : 'text-red-custom/70 hover:text-red-custom border-red-custom/30 hover:border-red-custom/50'
+                          }`}
                           title="Stop task"
                         >
-                          STOP
+                          {stoppingTaskId === task.id ? 'STOPPING...' : 'STOP'}
                         </button>
                       )}
                     </td>
