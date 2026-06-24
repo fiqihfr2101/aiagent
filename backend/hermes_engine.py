@@ -9,13 +9,14 @@ from app.infrastructure.agent_repository import AgentRepository
 
 
 class HermesEngine:
-    def __init__(self, broadcast_callback, metrics_collector: Optional[MetricsCollector] = None):
+    def __init__(self, broadcast_callback, metrics_collector: Optional[MetricsCollector] = None, task_repo=None):
         self.broadcast_callback = broadcast_callback
         self.metrics = metrics_collector or MetricsCollector()
         self.repo = AgentRepository()
         self.agents = []
         self.tasks = []
         self.logs = []
+        self.task_repo = task_repo
 
     async def initialize(self):
         """Load agents from DB, seed defaults if empty."""
@@ -123,8 +124,10 @@ class HermesEngine:
 
     async def stop_task(self, task_id: str):
         """Stop a task — update status in DB and log."""
-        from app.infrastructure.task_repository import TaskRepository
-        repo = TaskRepository()
+        repo = self.task_repo
+        if not repo:
+            from app.infrastructure.task_repository import TaskRepository
+            repo = TaskRepository()
         task = repo.get_by_id(task_id)
         if task:
             repo.update_status(task_id, "STOPPED")

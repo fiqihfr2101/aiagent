@@ -11,6 +11,7 @@ import uuid
 import logging
 import time
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 from hermes_engine import HermesEngine
 from app.infrastructure.memory_manager import MemoryManager
@@ -34,7 +35,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger("hermes")
 
-app = FastAPI()
+temporal_client = None
+
+# ─── Lifespan Context Manager ───────────────────────────────────
+@asynccontextmanager
+async def lifespan(app):
+    global temporal_client
+    # Startup
+    await cache.connect()
+    await ws_manager.start()
+    await hermes.initialize()
+
+    temporal_address = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
+    try:
+        temporal_client = await Client.connect(temporal_address)
+        logger.info("Connected to Temporal at %s", temporal_address)
+    except Exception as e:
+        logger.warning("Could not connect to Temporal: %s", e)
+
+    for agent in hermes.agents:
+        await metrics_collector.register_agent(agent["id"], agent["name"])
+
+    asyncio.create_task(system_heartbeat())
+    asyncio.create_task(ws_metrics_broadcast_loop())
+    asyncio.create_task(hermes.start_mock_activity())
+
+    yield
+
+    # Shutdown (cleanup if needed)
+
+app = FastAPI(lifespan=lifespan)
 
 # Enable CORS for Next.js frontend
 app.add_middleware(
@@ -79,12 +109,11 @@ async def _broadcast_shim(message: str):
     await ws_manager.broadcast(message)
 
 metrics_collector = MetricsCollector()
-hermes = HermesEngine(_broadcast_shim, metrics_collector)
 memory = MemoryManager()
 log_repo = LogRepository()
 task_repo = TaskRepository(log_repo=log_repo)
+hermes = HermesEngine(_broadcast_shim, metrics_collector, task_repo=task_repo)
 notification_svc = NotificationService()
-temporal_client = None
 # Track active simulated tasks so they can be cancelled
 _active_sim_tasks: dict[str, asyncio.Task] = {}
 
@@ -157,32 +186,6 @@ class NotificationRead(BaseModel):
     id: str
 
 
-@app.on_event("startup")
-async def startup_event():
-    global temporal_client
-    # Connect to Redis cache
-    await cache.connect()
-    # Start WebSocket manager
-    await ws_manager.start()
-    # Initialize engine (loads agents from DB)
-    await hermes.initialize()
-
-    # Connect to Temporal
-    temporal_address = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
-    try:
-        temporal_client = await Client.connect(temporal_address)
-        logger.info("Connected to Temporal at %s", temporal_address)
-    except Exception as e:
-        logger.warning("Could not connect to Temporal: %s", e)
-
-    # Register built-in agents with metrics
-    for agent in hermes.agents:
-        await metrics_collector.register_agent(agent["id"], agent["name"])
-
-    # Start mock telemetry and metrics broadcast
-    asyncio.create_task(system_heartbeat())
-    asyncio.create_task(ws_metrics_broadcast_loop())
-    asyncio.create_task(hermes.start_mock_activity())
 
 @app.get("/health")
 async def health():
@@ -487,6 +490,12 @@ async def get_task_history(
     return task_repo.get_history(page=page, page_size=page_size, agent_id=agent_id, status=status)
 
 
+@app.get("/tasks/counts")
+async def get_task_counts():
+    """Get active task counts per agent."""
+    return task_repo.get_all_active_task_counts()
+
+
 @app.get("/tasks/{task_id}")
 async def get_task(task_id: str):
     """Get task detail by ID."""
@@ -580,12 +589,6 @@ async def update_task_status(task_id: str, data: TaskStatusUpdate):
     }), channel="tasks")
 
     return updated_task
-
-
-@app.get("/tasks/counts")
-async def get_task_counts():
-    """Get active task counts per agent."""
-    return task_repo.get_all_active_task_counts()
 
 
 # ─── Log Endpoints ───────────────────────────────────────────────

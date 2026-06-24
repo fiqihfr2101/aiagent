@@ -221,36 +221,21 @@ class TestTaskEndpoints:
         assert data["page_size"] == 2
 
     def test_task_counts_bug_documented(self, client):
-        """BUG: /tasks/counts returns 404 because /tasks/{task_id} route matches 'counts' as task_id.
-        
-        Root cause: In main.py, /tasks/{task_id} (line 490) is defined BEFORE
-        /tasks/counts (line 585). FastAPI matches routes in order, so 'counts'
-        is captured as a path parameter.
-        
-        Fix: Move /tasks/counts route definition BEFORE /tasks/{task_id}.
+        """FIXED: /tasks/counts now returns 200 because /tasks/counts is defined before /tasks/{task_id}.
         """
         response = client.get("/tasks/counts")
-        # Document the bug - this should be 200 but returns 404
-        assert response.status_code == 404, "Bug should be present until route order is fixed"
+        assert response.status_code == 200, "Route order fixed: /tasks/counts now matches correctly"
 
     def test_stop_task_bug_documented(self, client):
-        """BUG: stop_task doesn't work because HermesEngine.stop_task creates new TaskRepository.
-        
-        Root cause: In hermes_engine.py line 127-128, stop_task creates a new
-        TaskRepository() with default db_path, not the same DB instance used by
-        the main app. This means the engine operates on a different database.
-        
-        Fix: Pass the TaskRepository instance to HermesEngine or use a shared pool.
+        """FIXED: stop_task now uses shared TaskRepository instance.
         """
         agents = client.get("/agents").json()
         task = client.post("/tasks", json={"agent_id": agents[0]["id"], "title": "Stoppable Task"}).json()
         time.sleep(0.5)
         response = client.post(f"/tasks/{task['id']}/stop")
-        # Document the bug - status should be STOPPED but may not be
         data = response.json()
         assert response.status_code == 200
-        # The stop returns 200 but status may still be RUNNING due to the bug
-        assert data["status"] in ("STOPPED", "RUNNING"), "Bug: status may not update due to separate DB instance"
+        assert data["status"] == "STOPPED", "stop_task now correctly updates status using shared DB instance"
 
     def test_stop_nonexistent_task(self, client):
         assert client.post("/tasks/nonexistent/stop").status_code == 404
