@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
 import NotificationItemComponent, { NotificationItem } from './NotificationItem';
 
 interface NotificationBellProps {
   newNotification: NotificationItem | null;
 }
 
-const NotificationBell: React.FC<NotificationBellProps> = ({ newNotification }) => {
+const NotificationBell: React.FC<NotificationBellProps> = memo(({ newNotification }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -55,7 +55,7 @@ const NotificationBell: React.FC<NotificationBellProps> = ({ newNotification }) 
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const handleMarkRead = async (id: string) => {
+  const handleMarkRead = useCallback(async (id: string) => {
     try {
       await fetch('http://localhost:8000/notifications/read', {
         method: 'POST',
@@ -69,9 +69,9 @@ const NotificationBell: React.FC<NotificationBellProps> = ({ newNotification }) 
     } catch (err) {
       // silent
     }
-  };
+  }, []);
 
-  const handleMarkAllRead = async () => {
+  const handleMarkAllRead = useCallback(async () => {
     try {
       await fetch('http://localhost:8000/notifications/read-all', { method: 'POST' });
       setNotifications(prev => prev.map(n => ({ ...n, read: true })));
@@ -79,11 +79,10 @@ const NotificationBell: React.FC<NotificationBellProps> = ({ newNotification }) 
     } catch (err) {
       // silent
     }
-  };
+  }, []);
 
-  const handleClearAll = async () => {
+  const handleClearAll = useCallback(async () => {
     try {
-      // Delete all visible notifications
       await Promise.all(
         notifications.map(n =>
           fetch(`http://localhost:8000/notifications/${n.id}`, { method: 'DELETE' })
@@ -94,13 +93,20 @@ const NotificationBell: React.FC<NotificationBellProps> = ({ newNotification }) 
     } catch (err) {
       // silent
     }
-  };
+  }, [notifications]);
+
+  const toggleOpen = useCallback(() => {
+    setIsOpen(prev => {
+      if (!prev) fetchNotifications();
+      return !prev;
+    });
+  }, [fetchNotifications]);
 
   return (
     <div className="relative" ref={dropdownRef}>
       {/* Bell Button */}
       <button
-        onClick={() => { setIsOpen(!isOpen); if (!isOpen) fetchNotifications(); }}
+        onClick={toggleOpen}
         className="relative w-7 h-7 rounded-md border border-border-custom bg-transparent flex items-center justify-center cursor-pointer text-txt3 hover:text-txt hover:border-border2 transition-all duration-150"
       >
         <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-[14px] h-[14px] stroke-current">
@@ -174,6 +180,8 @@ const NotificationBell: React.FC<NotificationBellProps> = ({ newNotification }) 
       )}
     </div>
   );
-};
+});
+
+NotificationBell.displayName = 'NotificationBell';
 
 export default NotificationBell;

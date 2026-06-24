@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { LogEntry, Agent } from '../types';
 
 interface ConsoleProps {
@@ -7,7 +7,23 @@ interface ConsoleProps {
   agents: Agent[];
 }
 
-const Console: React.FC<ConsoleProps> = ({ logs, agents }) => {
+const Console: React.FC<ConsoleProps> = memo(({ logs, agents }) => {
+  // Memoize rendered logs to avoid re-rendering on every parent update
+  const renderedLogs = useMemo(() => {
+    return logs.map((log, i) => (
+      <div key={i} className="flex gap-[10px]">
+        <span className="text-txt3 whitespace-nowrap">[{log[0]}]</span>
+        <span className="text-[#818CF8] w-20 flex-shrink-0">{log[1]}</span>
+        <span className={`w-12 flex-shrink-0 font-semibold ${
+          log[2] === 'INFO' ? 'text-cyan-custom' : 
+          log[2] === 'WARN' ? 'text-amb-custom' : 
+          log[2] === 'ERROR' ? 'text-red-custom' : 'text-txt3'
+        }`}>{log[2]}</span>
+        <span className="text-txt whitespace-pre-wrap">{log[3]}</span>
+      </div>
+    ));
+  }, [logs]);
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex-shrink-0 px-[18px] py-[10px] flex items-center gap-2 border-b border-border-custom bg-bg2">
@@ -26,18 +42,7 @@ const Console: React.FC<ConsoleProps> = ({ logs, agents }) => {
         <button className="bg-bg3 border border-border-custom text-txt px-[9px] py-1 rounded-md text-[10px]">Clear</button>
       </div>
       <div className="flex-1 bg-bg5 overflow-y-auto px-5 py-[13px] font-mono text-[11px] leading-[1.9]">
-        {logs.map((log, i) => (
-          <div key={i} className="flex gap-[10px]">
-            <span className="text-txt3 whitespace-nowrap">[{log[0]}]</span>
-            <span className="text-[#818CF8] w-20 flex-shrink-0">{log[1]}</span>
-            <span className={`w-12 flex-shrink-0 font-semibold ${
-              log[2] === 'INFO' ? 'text-cyan-custom' : 
-              log[2] === 'WARN' ? 'text-amb-custom' : 
-              log[2] === 'ERROR' ? 'text-red-custom' : 'text-txt3'
-            }`}>{log[2]}</span>
-            <span className="text-txt whitespace-pre-wrap">{log[3]}</span>
-          </div>
-        ))}
+        {renderedLogs}
         <div className="flex gap-[10px]">
           <span className="text-txt3 whitespace-nowrap">[{new Date().toLocaleTimeString('en-GB')}]</span>
           <span className="text-[#818CF8] w-20 flex-shrink-0">SYSTEM</span>
@@ -47,6 +52,8 @@ const Console: React.FC<ConsoleProps> = ({ logs, agents }) => {
       </div>
     </div>
   );
-};
+});
+
+Console.displayName = 'Console';
 
 export default Console;

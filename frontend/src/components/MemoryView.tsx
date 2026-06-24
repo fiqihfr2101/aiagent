@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { Memory, Agent } from '../types';
+import React, { memo } from 'react';
+import { Agent, Memory } from '../types';
 
 interface MemoryViewProps {
   agents: Agent[];
@@ -9,18 +9,26 @@ interface MemoryViewProps {
   onAdd?: (agentId: string) => void;
 }
 
-const MemoryView: React.FC<MemoryViewProps> = ({ agents, memories = {}, onSync = () => {}, onAdd = () => {} }) => {
-  const [activeId, setActiveId] = useState(agents[0]?.id || 'jarvis');
-  const [internalMemories, setInternalMemories] = useState<Record<string, Memory[]>>(memories);
-  const [search, setSearch] = useState('');
+const typeLabel: Record<string, string> = { fact: 'Fact', proc: 'Procedure', ctx: 'Context', ref: 'Reference' };
+const typeClass: Record<string, string> = { 
+  fact: 'bg-[rgba(0,212,170,0.1)] text-cyan-custom border border-[rgba(0,212,170,0.2)]',
+  proc: 'bg-[rgba(99,102,241,0.1)] text-[#A5B4FC] border border-[rgba(99,102,241,0.2)]',
+  ctx: 'bg-[rgba(245,158,11,0.1)] text-amb-custom border border-[rgba(245,158,11,0.2)]',
+  ref: 'bg-[rgba(34,197,94,0.1)] text-grn-custom border border-[rgba(34,197,94,0.2)]'
+};
+
+const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onSync = () => {}, onAdd = () => {} }) => {
+  const [activeId, setActiveId] = React.useState(agents[0]?.id || 'jarvis');
+  const [internalMemories, setInternalMemories] = React.useState<Record<string, Memory[]>>(memories);
+  const [search, setSearch] = React.useState('');
 
   // Update internal memories if prop changes
-  useEffect(() => {
+  React.useEffect(() => {
     setInternalMemories(memories);
   }, [memories]);
 
   // Handle case where parent doesn't handle fetching
-  useEffect(() => {
+  React.useEffect(() => {
     if (Object.keys(memories).length === 0) {
       const fetchMemories = async () => {
         const resp = await fetch(`http://localhost:8000/memories/${activeId}`);
@@ -39,14 +47,6 @@ const MemoryView: React.FC<MemoryViewProps> = ({ agents, memories = {}, onSync =
     m.title.toLowerCase().includes(search.toLowerCase()) || 
     m.body.toLowerCase().includes(search.toLowerCase())
   );
-
-  const typeLabel = { fact: 'Fact', proc: 'Procedure', ctx: 'Context', ref: 'Reference' };
-  const typeClass = { 
-    fact: 'bg-[rgba(0,212,170,0.1)] text-cyan-custom border border-[rgba(0,212,170,0.2)]',
-    proc: 'bg-[rgba(99,102,241,0.1)] text-[#A5B4FC] border border-[rgba(99,102,241,0.2)]',
-    ctx: 'bg-[rgba(245,158,11,0.1)] text-amb-custom border border-[rgba(245,158,11,0.2)]',
-    ref: 'bg-[rgba(34,197,94,0.1)] text-grn-custom border border-[rgba(34,197,94,0.2)]'
-  };
 
   return (
     <div className="grid grid-cols-[240px_1fr] h-full overflow-hidden">
@@ -119,6 +119,8 @@ const MemoryView: React.FC<MemoryViewProps> = ({ agents, memories = {}, onSync =
       </div>
     </div>
   );
-};
+});
+
+MemoryView.displayName = 'MemoryView';
 
 export default MemoryView;

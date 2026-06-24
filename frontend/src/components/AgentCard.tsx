@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { memo } from 'react';
 import { Agent } from '../types';
 
 interface AgentCardProps {
@@ -11,28 +11,28 @@ interface AgentCardProps {
   isStopping?: boolean;
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, onEdit, onDelete, taskCount = 0, isStopping = false }) => {
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'var(--cyan)';
-      case 'sleeping': return 'var(--amb)';
-      default: return 'var(--red)';
-    }
-  };
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'active': return 'var(--cyan)';
+    case 'sleeping': return 'var(--amb)';
+    default: return 'var(--red)';
+  }
+};
 
-  const getHbClass = (hb: string) => {
-    if (hb.includes('m')) return 'text-red-custom';
-    return parseInt(hb) > 30 ? 'text-amb-custom' : 'text-cyan-custom';
-  };
+const getHbClass = (hb: string) => {
+  if (hb.includes('m')) return 'text-red-custom';
+  return parseInt(hb) > 30 ? 'text-amb-custom' : 'text-cyan-custom';
+};
 
-  const getModelColor = (model?: string) => {
-    if (!model) return 'text-txt3';
-    if (model.includes('claude')) return 'text-purple-400';
-    if (model.includes('gpt')) return 'text-green-400';
-    if (model.includes('kimi')) return 'text-blue-400';
-    return 'text-txt3';
-  };
+const getModelColor = (model?: string) => {
+  if (!model) return 'text-txt3';
+  if (model.includes('claude')) return 'text-purple-400';
+  if (model.includes('gpt')) return 'text-green-400';
+  if (model.includes('kimi')) return 'text-blue-400';
+  return 'text-txt3';
+};
 
+const AgentCard: React.FC<AgentCardProps> = memo(({ agent, onClick, onEdit, onDelete, taskCount = 0, isStopping = false }) => {
   const stColor = getStatusColor(agent.status);
   const hbColorClass = getHbClass(agent.hb);
 
@@ -120,6 +120,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, onEdit, onDelete,
       </div>
     </div>
   );
-};
+});
+
+AgentCard.displayName = 'AgentCard';
 
 export default AgentCard;

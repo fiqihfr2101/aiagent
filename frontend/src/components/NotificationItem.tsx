@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { memo } from 'react';
 
 export interface NotificationItem {
   id: string;
@@ -46,7 +46,7 @@ const bgColorMap: Record<string, string> = {
   blue: 'bg-cyan-custom/10 border-cyan-custom/20',
 };
 
-const NotificationItemComponent: React.FC<NotificationItemProps> = ({ notification, onMarkRead }) => {
+const NotificationItemComponent: React.FC<NotificationItemProps> = memo(({ notification, onMarkRead }) => {
   const { id, icon, title, description, read, created_at, color } = notification;
 
   return (
@@ -75,6 +75,8 @@ const NotificationItemComponent: React.FC<NotificationItemProps> = ({ notificati
       )}
     </div>
   );
-};
+});
+
+NotificationItemComponent.displayName = 'NotificationItemComponent';
 
 export default NotificationItemComponent;

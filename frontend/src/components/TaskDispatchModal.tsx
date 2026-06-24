@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { memo, useState, useEffect, useCallback } from 'react';
 import { Agent, TaskPriority } from '@/types';
 
 interface ModelInfo {
@@ -17,7 +17,7 @@ interface TaskDispatchModalProps {
   preSelectedAgentId?: string;
 }
 
-const TaskDispatchModal: React.FC<TaskDispatchModalProps> = ({ isOpen, onClose, agents, preSelectedAgentId }) => {
+const TaskDispatchModal: React.FC<TaskDispatchModalProps> = memo(({ isOpen, onClose, agents, preSelectedAgentId }) => {
   const [agentId, setAgentId] = useState(preSelectedAgentId || '');
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<TaskPriority>('P2');
@@ -28,6 +28,23 @@ const TaskDispatchModal: React.FC<TaskDispatchModalProps> = ({ isOpen, onClose, 
   const [showModelOverride, setShowModelOverride] = useState(false);
 
   const selectedAgent = agents.find(a => a.id === agentId);
+
+  const getFamilyColor = useCallback((family: string) => {
+    switch (family) {
+      case 'claude': return 'text-purple-400';
+      case 'gpt': return 'text-green-400';
+      case 'kimi': return 'text-blue-400';
+      default: return 'text-txt3';
+    }
+  }, []);
+
+  const getModelFamily = useCallback((model?: string) => {
+    if (!model) return 'other';
+    if (model.includes('claude')) return 'claude';
+    if (model.includes('gpt')) return 'gpt';
+    if (model.includes('kimi')) return 'kimi';
+    return 'other';
+  }, []);
 
   // Fetch available models
   useEffect(() => {
@@ -57,23 +74,6 @@ const TaskDispatchModal: React.FC<TaskDispatchModalProps> = ({ isOpen, onClose, 
       }
     }
   }, [isOpen, preSelectedAgentId, agents]);
-
-  const getFamilyColor = (family: string) => {
-    switch (family) {
-      case 'claude': return 'text-purple-400';
-      case 'gpt': return 'text-green-400';
-      case 'kimi': return 'text-blue-400';
-      default: return 'text-txt3';
-    }
-  };
-
-  const getModelFamily = (model?: string) => {
-    if (!model) return 'other';
-    if (model.includes('claude')) return 'claude';
-    if (model.includes('gpt')) return 'gpt';
-    if (model.includes('kimi')) return 'kimi';
-    return 'other';
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -264,6 +264,8 @@ const TaskDispatchModal: React.FC<TaskDispatchModalProps> = ({ isOpen, onClose, 
       </div>
     </>
   );
-};
+});
+
+TaskDispatchModal.displayName = 'TaskDispatchModal';
 
 export default TaskDispatchModal;

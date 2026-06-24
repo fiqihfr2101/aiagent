@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { memo } from 'react';
 
 import CacheStatusIndicator from './CacheStatusIndicator';
 
@@ -11,7 +11,7 @@ interface NavBarProps {
   children?: React.ReactNode;
 }
 
-const NavBar: React.FC<NavBarProps> = ({ activeL1, setActiveL1, systemStatus, activeCount, children }) => {
+const NavBar: React.FC<NavBarProps> = memo(({ activeL1, setActiveL1, systemStatus, activeCount, children }) => {
   return (
     <nav className="flex-shrink-0 h-[44px] bg-[rgba(7,9,15,0.95)] border-b border-border-custom flex items-center px-4 gap-0 backdrop-blur-xl z-50">
       <div className="flex items-center gap-[9px] mr-6 cursor-pointer" onClick={() => setActiveL1('overview')}>
@@ -64,6 +64,8 @@ const NavBar: React.FC<NavBarProps> = ({ activeL1, setActiveL1, systemStatus, ac
       </div>
     </nav>
   );
-};
+});
+
+NavBar.displayName = 'NavBar';
 
 export default NavBar;

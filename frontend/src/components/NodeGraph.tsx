@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { memo, useState, useRef, useEffect, useMemo } from 'react';
 import { Agent } from '../types';
 
 interface NodeGraphProps {
@@ -22,7 +22,7 @@ const TREE: Record<string, { x: number, y: number, ch: string[] }> = {
 
 const NW = 138, NH = 54;
 
-const NodeGraph: React.FC<NodeGraphProps> = ({ agents, onAgentClick }) => {
+const NodeGraph: React.FC<NodeGraphProps> = memo(({ agents, onAgentClick }) => {
   const [scale, setScale] = useState(1);
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
   const isDragging = useRef(false);
@@ -63,6 +63,13 @@ const NodeGraph: React.FC<NodeGraphProps> = ({ agents, onAgentClick }) => {
   };
 
   const perimeter = (NW + NH) * 2;
+
+  // Memoize agent map for faster lookups
+  const agentMap = useMemo(() => {
+    const map = new Map<string, Agent>();
+    agents.forEach(a => map.set(a.id, a));
+    return map;
+  }, [agents]);
 
   return (
     <div className="flex flex-col h-full bg-bg dotgrid relative overflow-hidden" onMouseDown={handleMouseDown} onWheel={handleWheel}>
@@ -111,7 +118,7 @@ const NodeGraph: React.FC<NodeGraphProps> = ({ agents, onAgentClick }) => {
           ))}
 
           {Object.entries(TREE).map(([id, n]) => {
-            const agent = agents.find(a => a.id === id);
+            const agent = agentMap.get(id);
             if (!agent) return null;
             const nodeColor = agent.status === 'active' ? '#00D4AA' : agent.status === 'sleeping' ? 'rgba(0,180,140,0.45)' : 'rgba(100,116,139,0.4)';
             const dur = agent.status === 'active' ? '2.5s' : '7s';
@@ -142,6 +149,8 @@ const NodeGraph: React.FC<NodeGraphProps> = ({ agents, onAgentClick }) => {
       </svg>
     </div>
   );
-};
+});
+
+NodeGraph.displayName = 'NodeGraph';
 
 export default NodeGraph;

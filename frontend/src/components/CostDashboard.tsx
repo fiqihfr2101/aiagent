@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { memo, useState, useEffect, useCallback } from 'react';
 import { cachedFetch } from '@/utils/apiCache';
 import {
   PieChart, Pie, Cell, BarChart, Bar, LineChart, Line,
@@ -45,7 +45,31 @@ interface DailyCost {
   task_count: number;
 }
 
-const CostDashboard: React.FC = () => {
+const formatCost = (cost: number) => `$${cost.toFixed(4)}`;
+const formatTokens = (tokens: number) => {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
+  return tokens.toString();
+};
+
+// Custom tooltip for dark theme - defined outside component to avoid re-creation
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-bg2 border border-border-custom rounded-lg p-2.5 shadow-lg">
+        <p className="text-[10px] text-txt2 mb-1">{label}</p>
+        {payload.map((entry: any, i: number) => (
+          <p key={i} className="text-[11px] font-mono font-semibold" style={{ color: entry.color }}>
+            {entry.name}: {typeof entry.value === 'number' ? (entry.name === 'cost' ? formatCost(entry.value) : formatTokens(entry.value)) : entry.value}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
+const CostDashboard: React.FC = memo(() => {
   const [summary, setSummary] = useState<CostSummary | null>(null);
   const [agentCosts, setAgentCosts] = useState<AgentCost[]>([]);
   const [modelCosts, setModelCosts] = useState<ModelCost[]>([]);
@@ -75,34 +99,7 @@ const CostDashboard: React.FC = () => {
     fetchCosts();
     const interval = setInterval(fetchCosts, 10000);
     return () => clearInterval(interval);
-  }, []);
-
-  const formatCost = (cost: number) => `$${cost.toFixed(4)}`;
-  const formatTokens = (tokens: number) => {
-    if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
-    if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
-    return tokens.toString();
-  };
-
-  const pieData = agentCosts.map(a => ({ name: a.agent_name, value: a.total_cost }));
-  const barData = modelCosts.map(m => ({ name: m.model, cost: m.total_cost }));
-
-  // Custom tooltip for dark theme
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-bg2 border border-border-custom rounded-lg p-2.5 shadow-lg">
-          <p className="text-[10px] text-txt2 mb-1">{label}</p>
-          {payload.map((entry: any, i: number) => (
-            <p key={i} className="text-[11px] font-mono font-semibold" style={{ color: entry.color }}>
-              {entry.name}: {typeof entry.value === 'number' ? (entry.name === 'cost' ? formatCost(entry.value) : formatTokens(entry.value)) : entry.value}
-            </p>
-          ))}
-        </div>
-      );
-    }
-    return null;
-  };
+  }, [fetchCosts]);
 
   if (loading) {
     return (
@@ -155,11 +152,11 @@ const CostDashboard: React.FC = () => {
         {/* Cost by Agent - Pie Chart */}
         <div className="bg-bg2 border border-border-custom rounded-lg p-3.5">
           <div className="text-[9px] text-txt2 uppercase tracking-[0.08em] mb-3">Cost by Agent</div>
-          {pieData.length > 0 ? (
+          {agentCosts.length > 0 ? (
             <ResponsiveContainer width="100%" height={180}>
               <PieChart>
                 <Pie
-                  data={pieData}
+                  data={agentCosts.map(a => ({ name: a.agent_name, value: a.total_cost }))}
                   cx="50%"
                   cy="50%"
                   innerRadius={40}
@@ -167,7 +164,7 @@ const CostDashboard: React.FC = () => {
                   paddingAngle={3}
                   dataKey="value"
                 >
-                  {pieData.map((_, index) => (
+                  {agentCosts.map((_, index) => (
                     <Cell key={index} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
@@ -187,9 +184,9 @@ const CostDashboard: React.FC = () => {
         {/* Cost by Model - Bar Chart */}
         <div className="bg-bg2 border border-border-custom rounded-lg p-3.5">
           <div className="text-[9px] text-txt2 uppercase tracking-[0.08em] mb-3">Cost by Model</div>
-          {barData.length > 0 ? (
+          {modelCosts.length > 0 ? (
             <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={barData}>
+              <BarChart data={modelCosts.map(m => ({ name: m.model, cost: m.total_cost }))}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(22,35,58,0.8)" />
                 <XAxis dataKey="name" tick={{ fill: '#6B7A99', fontSize: 9 }} />
                 <YAxis tick={{ fill: '#6B7A99', fontSize: 9 }} />
@@ -262,6 +259,8 @@ const CostDashboard: React.FC = () => {
       </div>
     </div>
   );
-};
+});
+
+CostDashboard.displayName = 'CostDashboard';
 
 export default CostDashboard;

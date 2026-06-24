@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { memo, useState, useEffect, useCallback, useMemo } from 'react';
 import { DispatchTask, TaskHistoryResponse, TaskStatus, Agent, TaskLog } from '@/types';
 import TaskLogs from './TaskLogs';
 
@@ -22,7 +22,7 @@ const priorityColors: Record<string, string> = {
   P3: 'text-grn-custom',
 };
 
-const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
+const TaskHistory: React.FC<TaskHistoryProps> = memo(({ agents }) => {
   const [tasks, setTasks] = useState<DispatchTask[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -34,6 +34,13 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [taskLogs, setTaskLogs] = useState<Record<string, TaskLog[]>>({});
   const [loadingLogs, setLoadingLogs] = useState<string | null>(null);
+
+  // Memoize agent name lookup map
+  const agentNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    agents.forEach(a => map.set(a.id, a.name));
+    return map;
+  }, [agents]);
 
   const fetchHistory = useCallback(async () => {
     setLoading(true);
@@ -67,26 +74,25 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
     setPage(1);
   }, [filterAgent, filterStatus]);
 
-  const getAgentName = (agentId: string) => {
-    const agent = agents.find(a => a.id === agentId);
-    return agent ? agent.name : agentId;
-  };
+  const getAgentName = useCallback((agentId: string) => {
+    return agentNameMap.get(agentId) || agentId;
+  }, [agentNameMap]);
 
-  const formatDuration = (seconds?: number | null) => {
+  const formatDuration = useCallback((seconds?: number | null) => {
     if (seconds == null) return '—';
     if (seconds < 60) return `${seconds}s`;
     const m = Math.floor(seconds / 60);
     const s = Math.round(seconds % 60);
     return `${m}m ${s}s`;
-  };
+  }, []);
 
-  const formatTokens = (tokens: number) => {
+  const formatTokens = useCallback((tokens: number) => {
     if (tokens === 0) return '—';
     if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k`;
     return tokens.toString();
-  };
+  }, []);
 
-  const formatDate = (iso?: string | null) => {
+  const formatDate = useCallback((iso?: string | null) => {
     if (!iso) return '—';
     const d = new Date(iso);
     return d.toLocaleString('en-US', {
@@ -95,9 +101,9 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
       hour: '2-digit',
       minute: '2-digit',
     });
-  };
+  }, []);
 
-  const toggleExpand = async (taskId: string) => {
+  const toggleExpand = useCallback(async (taskId: string) => {
     if (expandedTaskId === taskId) {
       setExpandedTaskId(null);
       return;
@@ -117,9 +123,9 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
         setLoadingLogs(null);
       }
     }
-  };
+  }, [expandedTaskId, taskLogs]);
 
-  const handleStopTask = async (taskId: string, taskTitle: string) => {
+  const handleStopTask = useCallback(async (taskId: string, taskTitle: string) => {
     if (!confirm(`Stop task "${taskTitle}"?\n\nThis will immediately halt execution.`)) return;
     setStoppingTaskId(taskId);
     try {
@@ -132,7 +138,7 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
     } finally {
       setStoppingTaskId(null);
     }
-  };
+  }, [fetchHistory]);
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -319,6 +325,8 @@ const TaskHistory: React.FC<TaskHistoryProps> = ({ agents }) => {
       )}
     </div>
   );
-};
+});
+
+TaskHistory.displayName = 'TaskHistory';
 
 export default TaskHistory;

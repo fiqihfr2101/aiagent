@@ -1,22 +1,31 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import NavBar from '@/components/NavBar';
 import Sidebar from '@/components/Sidebar';
 import AgentCard from '@/components/AgentCard';
-import NodeGraph from '@/components/NodeGraph';
-import Console from '@/components/Console';
-import MemoryView from '@/components/MemoryView';
-import AnalyticsView from '@/components/AnalyticsView';
-import CostDashboard from '@/components/CostDashboard';
-import AddAgentModal from '@/components/AddAgentModal';
-import EditAgentModal from '@/components/EditAgentModal';
-import TaskDispatchModal from '@/components/TaskDispatchModal';
-import TaskHistory from '@/components/TaskHistory';
-import TaskLogs from '@/components/TaskLogs';
 import NotificationBell from '@/components/NotificationBell';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { Agent, LogEntry, TaskLog } from '@/types';
+
+// Dynamic imports for heavy components (code splitting)
+const NodeGraph = lazy(() => import('@/components/NodeGraph'));
+const Console = lazy(() => import('@/components/Console'));
+const MemoryView = lazy(() => import('@/components/MemoryView'));
+const AnalyticsView = lazy(() => import('@/components/AnalyticsView'));
+const CostDashboard = lazy(() => import('@/components/CostDashboard'));
+const AddAgentModal = lazy(() => import('@/components/AddAgentModal'));
+const EditAgentModal = lazy(() => import('@/components/EditAgentModal'));
+const TaskDispatchModal = lazy(() => import('@/components/TaskDispatchModal'));
+const TaskHistory = lazy(() => import('@/components/TaskHistory'));
+const TaskLogs = lazy(() => import('@/components/TaskLogs'));
+
+// Loading fallback for lazy components
+const ComponentLoader = () => (
+  <div className="flex items-center justify-center h-full">
+    <div className="w-6 h-6 border-2 border-cyan-custom/30 border-t-cyan-custom rounded-full animate-spin" />
+  </div>
+);
 
 export default function MissionControl() {
   const [activeL1, setActiveL1] = useState('overview');
@@ -40,6 +49,15 @@ export default function MissionControl() {
   const [toast, setToast] = useState<{ message: string; visible: boolean; color: string }>({ message: '', visible: false, color: 'red' });
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [newNotificationProp, setNewNotificationProp] = useState<any>(null);
+
+  // Memoized model badge color helper
+  const getModelBadgeColor = useCallback((model?: string) => {
+    if (!model) return 'text-txt3';
+    if (model.includes('claude')) return 'text-purple-400';
+    if (model.includes('gpt')) return 'text-green-400';
+    if (model.includes('kimi')) return 'text-blue-400';
+    return 'text-txt3';
+  }, []);
 
   // Show toast when a model is updated
   useEffect(() => {
@@ -109,18 +127,19 @@ export default function MissionControl() {
     }
   }, [activeL2, globalLogsLoaded]);
 
-  const handleOpenDrawer = (id: string) => {
+  // Memoized callbacks for handlers
+  const handleOpenDrawer = useCallback((id: string) => {
     setSelectedAgentId(id);
     setIsDrawerOpen(true);
     setDrawerTab('overview');
-  };
+  }, []);
 
-  const handleEditAgent = (agent: Agent) => {
+  const handleEditAgent = useCallback((agent: Agent) => {
     setEditingAgent(agent);
     setIsEditModalOpen(true);
-  };
+  }, []);
 
-  const handleDeleteAgent = async (id: string) => {
+  const handleDeleteAgent = useCallback(async (id: string) => {
     if (!confirm('Remove this agent from the fleet?')) return;
     try {
       const res = await fetch(`http://localhost:8000/agents/${id}`, { method: 'DELETE' });
@@ -128,17 +147,17 @@ export default function MissionControl() {
     } catch (err) {
       console.error('Failed to delete agent:', err);
     }
-  };
+  }, []);
 
-  const handleAgentAdded = (agent: any) => {
+  const handleAgentAdded = useCallback((agent: any) => {
     // WebSocket will auto-update via fleet_update
-  };
+  }, []);
 
-  const handleAgentUpdated = (agent: any) => {
+  const handleAgentUpdated = useCallback((agent: any) => {
     // WebSocket will auto-update via fleet_update
-  };
+  }, []);
 
-  const handleDispatchTask = async () => {
+  const handleDispatchTask = useCallback(async () => {
     if (!selectedAgentId || !taskTitle) return;
     setIsSubmitting(true);
     try {
@@ -160,17 +179,24 @@ export default function MissionControl() {
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [selectedAgentId, taskTitle, taskPriority]);
 
-  const activeAgent = agents.find(a => a.id === selectedAgentId);
+  const setActiveL1AndReset = useCallback((val: string) => {
+    setActiveL1(val);
+    setActiveL2('overview');
+  }, []);
 
-  const getModelBadgeColor = (model?: string) => {
-    if (!model) return 'text-txt3';
-    if (model.includes('claude')) return 'text-purple-400';
-    if (model.includes('gpt')) return 'text-green-400';
-    if (model.includes('kimi')) return 'text-blue-400';
-    return 'text-txt3';
-  };
+  const dismissToast = useCallback(() => {
+    setToast(prev => ({ ...prev, visible: false }));
+  }, []);
+
+  // Memoized derived data
+  const activeAgent = useMemo(() => agents.find(a => a.id === selectedAgentId), [agents, selectedAgentId]);
+
+  const filteredDrawerLogs = useMemo(
+    () => logs.filter(l => l[1] === activeAgent?.name),
+    [logs, activeAgent?.name]
+  );
 
   return (
     <div className="shell dotgrid flex flex-col h-screen overflow-hidden bg-bg text-txt font-sans selection:bg-cyan-custom/30">
@@ -191,7 +217,7 @@ export default function MissionControl() {
               'text-cyan-custom'
             }`}>{toast.message}</span>
             <button 
-              onClick={() => setToast(prev => ({ ...prev, visible: false }))}
+              onClick={dismissToast}
               className="text-txt3 hover:text-txt ml-1 text-[10px]"
             >✕</button>
           </div>
@@ -200,7 +226,7 @@ export default function MissionControl() {
       
       <NavBar 
         activeL1={activeL1} 
-        setActiveL1={(val: string) => { setActiveL1(val); setActiveL2('overview'); }} 
+        setActiveL1={setActiveL1AndReset}
         systemStatus={systemOnline ? 'ONLINE' : 'OFFLINE'}
         activeCount={`${stats.active_nodes} / 12 active`}
       >
@@ -286,7 +312,7 @@ export default function MissionControl() {
                   <AgentCard 
                     key={agent.id} 
                     agent={agent} 
-                    onClick={() => handleOpenDrawer(agent.id)}
+                    onClick={handleOpenDrawer}
                     onEdit={handleEditAgent}
                     onDelete={handleDeleteAgent}
                     taskCount={taskCounts[agent.id] || 0}
@@ -299,16 +325,22 @@ export default function MissionControl() {
         )}
 
         {activeL1 === 'overview' && activeL2 === 'graph' && (
-          <NodeGraph agents={agents} onAgentClick={handleOpenDrawer} />
+          <Suspense fallback={<ComponentLoader />}>
+            <NodeGraph agents={agents} onAgentClick={handleOpenDrawer} />
+          </Suspense>
         )}
 
         {activeL1 === 'overview' && activeL2 === 'console' && (
-          <Console logs={logs} agents={agents} />
+          <Suspense fallback={<ComponentLoader />}>
+            <Console logs={logs} agents={agents} />
+          </Suspense>
         )}
 
         {activeL1 === 'overview' && activeL2 === 'tasks' && (
           <div className="view on h-full animate-fadein">
-            <TaskHistory agents={agents} />
+            <Suspense fallback={<ComponentLoader />}>
+              <TaskHistory agents={agents} />
+            </Suspense>
           </div>
         )}
 
@@ -321,57 +353,75 @@ export default function MissionControl() {
                 <span className="text-[10px] text-txt2 font-mono">{globalLogs.length} entries</span>
               </div>
               <div className="flex-1 min-h-0">
-                <TaskLogs
-                  logs={globalLogs}
-                  maxHeight="h-full"
-                  showSearch
-                  showCopy
-                  showLevelFilter
-                  autoScroll={false}
-                />
+                <Suspense fallback={<ComponentLoader />}>
+                  <TaskLogs
+                    logs={globalLogs}
+                    maxHeight="h-full"
+                    showSearch
+                    showCopy
+                    showLevelFilter
+                    autoScroll={false}
+                  />
+                </Suspense>
               </div>
             </div>
           </div>
         )}
 
         {activeL1 === 'memory' && (
-          <MemoryView agents={agents} />
+          <Suspense fallback={<ComponentLoader />}>
+            <MemoryView agents={agents} />
+          </Suspense>
         )}
 
         {activeL1 === 'analytics-main' && (
-          <AnalyticsView />
+          <Suspense fallback={<ComponentLoader />}>
+            <AnalyticsView />
+          </Suspense>
         )}
 
         {activeL1 === 'costs' && (
           <div className="view on h-full animate-fadein">
-            <CostDashboard />
+            <Suspense fallback={<ComponentLoader />}>
+              <CostDashboard />
+            </Suspense>
           </div>
         )}
 
       </main>
 
-      {/* ADD AGENT MODAL */}
-      <AddAgentModal
-        isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        onAgentAdded={handleAgentAdded}
-      />
+      {/* MODALS — lazy loaded, only mounted when open */}
+      {isAddModalOpen && (
+        <Suspense fallback={null}>
+          <AddAgentModal
+            isOpen={isAddModalOpen}
+            onClose={() => setIsAddModalOpen(false)}
+            onAgentAdded={handleAgentAdded}
+          />
+        </Suspense>
+      )}
 
-      {/* EDIT AGENT MODAL */}
-      <EditAgentModal
-        isOpen={isEditModalOpen}
-        agent={editingAgent}
-        onClose={() => { setIsEditModalOpen(false); setEditingAgent(null); }}
-        onAgentUpdated={handleAgentUpdated}
-      />
+      {isEditModalOpen && (
+        <Suspense fallback={null}>
+          <EditAgentModal
+            isOpen={isEditModalOpen}
+            agent={editingAgent}
+            onClose={() => { setIsEditModalOpen(false); setEditingAgent(null); }}
+            onAgentUpdated={handleAgentUpdated}
+          />
+        </Suspense>
+      )}
 
-      {/* TASK DISPATCH MODAL */}
-      <TaskDispatchModal
-        isOpen={isTaskModalOpen}
-        onClose={() => setIsTaskModalOpen(false)}
-        agents={agents}
-        preSelectedAgentId={selectedAgentId || undefined}
-      />
+      {isTaskModalOpen && (
+        <Suspense fallback={null}>
+          <TaskDispatchModal
+            isOpen={isTaskModalOpen}
+            onClose={() => setIsTaskModalOpen(false)}
+            agents={agents}
+            preSelectedAgentId={selectedAgentId || undefined}
+          />
+        </Suspense>
+      )}
 
       {/* DRAWER & OVERLAY */}
       {isDrawerOpen && activeAgent && (
@@ -402,7 +452,6 @@ export default function MissionControl() {
                     {activeAgent.model}
                   </span>
                 )}
-                {/* Active task count in drawer */}
                 {(taskCounts[activeAgent.id] || 0) > 0 && (
                   <span className="px-2 py-[2px] rounded-full text-[8px] font-bold font-mono border border-cyan-custom/30 bg-cyan-custom/10 text-cyan-custom flex items-center gap-1">
                     <span className="w-1 h-1 rounded-full bg-cyan-custom animate-pulse" />
@@ -484,12 +533,12 @@ export default function MissionControl() {
 
                {drawerTab === 'logs' && (
                  <div className="animate-fadein bg-bg5 border border-border-custom rounded-lg p-3 font-mono text-[10px] leading-relaxed">
-                   {logs.filter(l => l[1] === activeAgent.name).map((log, i) => (
+                   {filteredDrawerLogs.map((log, i) => (
                      <div key={i} className="mb-1">
                        <span className="text-txt3">[{log[0]}]</span> <span className="text-cyan-custom font-semibold mr-2">{log[2]}</span> <span className="text-txt">{log[3]}</span>
                      </div>
                    ))}
-                   {logs.filter(l => l[1] === activeAgent.name).length === 0 && (
+                   {filteredDrawerLogs.length === 0 && (
                      <div className="text-txt3 italic">// No recent logs for this agent</div>
                    )}
                  </div>
@@ -498,7 +547,6 @@ export default function MissionControl() {
           </div>
         </>
       )}
-
     </div>
   );
 }

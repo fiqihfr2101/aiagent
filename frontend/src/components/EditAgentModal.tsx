@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { memo, useState, useEffect } from 'react';
 import { Agent } from '../types';
 
 interface ModelInfo {
@@ -17,7 +17,7 @@ interface EditAgentModalProps {
   onAgentUpdated: (agent: any) => void;
 }
 
-const EditAgentModal: React.FC<EditAgentModalProps> = ({ isOpen, agent, onClose, onAgentUpdated }) => {
+const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, onClose, onAgentUpdated }) => {
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [model, setModel] = useState('claude-sonnet-4');
@@ -182,6 +182,8 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ isOpen, agent, onClose,
       </div>
     </div>
   );
-};
+});
+
+EditAgentModal.displayName = 'EditAgentModal';
 
 export default EditAgentModal;

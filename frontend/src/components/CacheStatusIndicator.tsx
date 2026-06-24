@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { memo, useState, useEffect } from 'react';
 
 interface CacheStatus {
   available: boolean;
@@ -13,7 +13,7 @@ interface CacheStatus {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-const CacheStatusIndicator: React.FC = () => {
+const CacheStatusIndicator: React.FC = memo(() => {
   const [status, setStatus] = useState<CacheStatus | null>(null);
   const [visible, setVisible] = useState(false);
 
@@ -77,6 +77,8 @@ const CacheStatusIndicator: React.FC = () => {
       )}
     </div>
   );
-};
+});
+
+CacheStatusIndicator.displayName = 'CacheStatusIndicator';
 
 export default CacheStatusIndicator;

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { memo, useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { TaskLog } from '@/types';
 
 interface TaskLogsProps {
@@ -28,7 +28,12 @@ const levelIcons: Record<string, string> = {
   DEBUG: '⚙',
 };
 
-const TaskLogs: React.FC<TaskLogsProps> = ({
+const formatTimestamp = (iso: string) => {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+};
+
+const TaskLogs: React.FC<TaskLogsProps> = memo(({
   taskId,
   logs: externalLogs,
   maxHeight = 'max-h-80',
@@ -84,15 +89,15 @@ const TaskLogs: React.FC<TaskLogsProps> = ({
     }
   }, [logs, autoScroll, isPaused]);
 
-  // Filter logs
-  const filteredLogs = logs.filter((log) => {
+  // Filter logs with useMemo
+  const filteredLogs = useMemo(() => logs.filter((log) => {
     if (filterLevel && log.level !== filterLevel) return false;
     if (searchQuery && !log.message.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     return true;
-  });
+  }), [logs, filterLevel, searchQuery]);
 
   // Copy all visible logs to clipboard
-  const handleCopy = () => {
+  const handleCopy = useCallback(() => {
     const text = filteredLogs
       .map((log) => `[${log.timestamp}] [${log.level}] ${log.message}`)
       .join('\n');
@@ -100,12 +105,7 @@ const TaskLogs: React.FC<TaskLogsProps> = ({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
-  };
-
-  const formatTimestamp = (iso: string) => {
-    const d = new Date(iso);
-    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  };
+  }, [filteredLogs]);
 
   return (
     <div className="flex flex-col h-full">
@@ -190,6 +190,8 @@ const TaskLogs: React.FC<TaskLogsProps> = ({
       </div>
     </div>
   );
-};
+});
+
+TaskLogs.displayName = 'TaskLogs';
 
 export default TaskLogs;

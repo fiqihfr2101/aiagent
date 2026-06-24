@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { memo } from 'react';
 
 interface SidebarProps {
   activeL2: string;
@@ -7,32 +7,32 @@ interface SidebarProps {
   stats: { running: number; sleeping: number; offline: number };
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeL2, setActiveL2, stats }) => {
-  const tabs = [
-    { id: 'overview', label: 'Overview', icon: (
-      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-    )},
-    { id: 'graph', label: 'Node Graph', icon: (
-      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="12" r="3"/><circle cx="6" cy="18" r="3"/><path d="M9 6h6a3 3 0 0 1 3 3M9 18h3"/></svg>
-    )},
-    { id: 'tasks', label: 'Task History', icon: (
-      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
-    )},
-    { id: 'console', label: 'Console', icon: (
-      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>
-    )},
-    { id: 'logs', label: 'Logs', icon: (
-      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg>
-    )},
-    { id: 'analytics', label: 'Diagnostics', icon: (
-      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><path d="M3 3v18h18M7 14l3-4 3 3 4-6"/></svg>
-    )},
-  ];
+const TABS = [
+  { id: 'overview', label: 'Overview', icon: (
+    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+  )},
+  { id: 'graph', label: 'Node Graph', icon: (
+    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="12" r="3"/><circle cx="6" cy="18" r="3"/><path d="M9 6h6a3 3 0 0 1 3 3M9 18h3"/></svg>
+  )},
+  { id: 'tasks', label: 'Task History', icon: (
+    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+  )},
+  { id: 'console', label: 'Console', icon: (
+    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>
+  )},
+  { id: 'logs', label: 'Logs', icon: (
+    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg>
+  )},
+  { id: 'analytics', label: 'Diagnostics', icon: (
+    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><path d="M3 3v18h18M7 14l3-4 3 3 4-6"/></svg>
+  )},
+];
 
+const Sidebar: React.FC<SidebarProps> = memo(({ activeL2, setActiveL2, stats }) => {
   return (
     <nav className="flex-shrink-0 h-[34px] bg-[rgba(11,15,26,0.9)] border-b border-[rgba(22,35,58,0.8)] flex items-center px-4 gap-0">
       <div className="flex items-center gap-[1px]">
-        {tabs.map((tab) => (
+        {TABS.map((tab) => (
           <div
             key={tab.id}
             onClick={() => setActiveL2(tab.id)}
@@ -61,6 +61,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeL2, setActiveL2, stats }) => {
       </div>
     </nav>
   );
-};
+});
+
+Sidebar.displayName = 'Sidebar';
 
 export default Sidebar;

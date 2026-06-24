@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { memo, useState } from 'react';
 
 interface AddAgentModalProps {
   isOpen: boolean;
@@ -15,7 +15,7 @@ const MODEL_OPTIONS = [
   'kimi-k2',
 ];
 
-const AddAgentModal: React.FC<AddAgentModalProps> = ({ isOpen, onClose, onAgentAdded }) => {
+const AddAgentModal: React.FC<AddAgentModalProps> = memo(({ isOpen, onClose, onAgentAdded }) => {
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [model, setModel] = useState('claude-sonnet-4');
@@ -134,6 +134,8 @@ const AddAgentModal: React.FC<AddAgentModalProps> = ({ isOpen, onClose, onAgentA
       </div>
     </div>
   );
-};
+});
+
+AddAgentModal.displayName = 'AddAgentModal';
 
 export default AddAgentModal;
