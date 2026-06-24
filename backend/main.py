@@ -20,6 +20,7 @@ from app.infrastructure.log_repository import LogRepository
 from app.infrastructure.agent_repository import VALID_MODELS
 from app.infrastructure.notification_service import NotificationService
 from app.infrastructure.cache_service import cache
+from app.infrastructure.ws_manager import ws_manager, CHANNELS
 from workflows.agent_workflow import AgentTaskWorkflow
 
 # Load environment variables
@@ -73,29 +74,12 @@ async def request_id_middleware(request: Request, call_next):
     )
     return response
 
-# Store active connections
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
+# Legacy shim: keep HermesEngine working with old broadcast signature
+async def _broadcast_shim(message: str):
+    await ws_manager.broadcast(message)
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: str):
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(message)
-            except:
-                pass
-
-manager = ConnectionManager()
 metrics_collector = MetricsCollector()
-hermes = HermesEngine(manager.broadcast, metrics_collector)
+hermes = HermesEngine(_broadcast_shim, metrics_collector)
 memory = MemoryManager()
 log_repo = LogRepository()
 task_repo = TaskRepository(log_repo=log_repo)
@@ -124,11 +108,11 @@ async def _emit_notification(
     # Store in DB
     notif = notification_svc.create(notif_type, title, description, data)
 
-    # Broadcast to all WebSocket clients
-    await manager.broadcast(json.dumps({
+    # Broadcast to notifications channel
+    await ws_manager.broadcast(json.dumps({
         "type": "new_notification",
         "notification": notif,
-    }))
+    }), channel="notifications")
 
     # Push to Telegram if task-related
     if task_title and agent_name and status:
@@ -178,6 +162,8 @@ async def startup_event():
     global temporal_client
     # Connect to Redis cache
     await cache.connect()
+    # Start WebSocket manager
+    await ws_manager.start()
     # Initialize engine (loads agents from DB)
     await hermes.initialize()
 
@@ -195,7 +181,7 @@ async def startup_event():
 
     # Start mock telemetry and metrics broadcast
     asyncio.create_task(system_heartbeat())
-    asyncio.create_task(metrics_broadcast_loop())
+    asyncio.create_task(ws_metrics_broadcast_loop())
     asyncio.create_task(hermes.start_mock_activity())
 
 @app.get("/health")
@@ -309,12 +295,12 @@ async def update_agent(agent_id: str, data: AgentUpdate):
     )
     # If model changed, broadcast model_update
     if data.model and data.model != agent.get("model"):
-        await manager.broadcast(json.dumps({
+        await ws_manager.broadcast(json.dumps({
             "type": "model_update",
             "agent_id": agent_id,
             "model": data.model,
             "agent": updated,
-        }))
+        }), channel="agents")
     # Invalidate agent cache on update
     await cache.invalidate_agents()
     return updated
@@ -339,12 +325,12 @@ async def update_agent_model(agent_id: str, data: ModelUpdate):
         raise HTTPException(status_code=400, detail=f"Invalid model: {data.model}. Valid models: {', '.join(sorted(VALID_MODELS))}")
     updated = await hermes.update_agent_model(agent_id, data.model)
     # Broadcast model_update for immediate UI refresh
-    await manager.broadcast(json.dumps({
+    await ws_manager.broadcast(json.dumps({
         "type": "model_update",
         "agent_id": agent_id,
         "model": data.model,
         "agent": updated,
-    }))
+    }), channel="agents")
     # Invalidate agent cache on model update
     await cache.invalidate_agents()
     return updated
@@ -420,11 +406,11 @@ async def dispatch_task(task_data: TaskCreate):
 
     await hermes.log("SYSTEM", "INFO", f"Task dispatched: {task_data.title} → {agent['name']}")
     
-    # Broadcast task update via WebSocket
-    await manager.broadcast(json.dumps({
+    # Broadcast task update via WebSocket (tasks channel)
+    await ws_manager.broadcast(json.dumps({
         "type": "task_update",
         "task": task,
-    }))
+    }), channel="tasks")
 
     # Invalidate task cache on new dispatch
     await cache.invalidate_tasks()
@@ -484,10 +470,10 @@ async def _simulate_task(task_id: str, agent_id: str, title: str):
 
         log_repo.create(f"Task completed successfully. Cost: ${cost:.4f}", level="INFO", task_id=task_id, agent_id=agent_id)
         await hermes.log("SYSTEM", "INFO", f"Task completed: {title}")
-        await manager.broadcast(json.dumps({
+        await ws_manager.broadcast(json.dumps({
             "type": "task_update",
             "task": task,
-        }))
+        }), channel="tasks")
     _active_sim_tasks.pop(task_id, None)
 
 @app.get("/tasks/history")
@@ -548,14 +534,14 @@ async def stop_task(task_id: str):
     )
 
     # Broadcast both task_update (for history refresh) and task_stopped (for toast)
-    await manager.broadcast(json.dumps({
+    await ws_manager.broadcast(json.dumps({
         "type": "task_update",
         "task": updated_task,
-    }))
-    await manager.broadcast(json.dumps({
+    }), channel="tasks")
+    await ws_manager.broadcast(json.dumps({
         "type": "task_stopped",
         "task": updated_task,
-    }))
+    }), channel="tasks")
 
     # Invalidate task cache on stop
     await cache.invalidate_tasks()
@@ -587,11 +573,11 @@ async def update_task_status(task_id: str, data: TaskStatusUpdate):
     task_repo.update_status(task_id, data.status, result=data.result, tokens_used=data.tokens_used)
     updated_task = task_repo.get_by_id(task_id)
 
-    # Broadcast task update
-    await manager.broadcast(json.dumps({
+    # Broadcast task update (tasks channel)
+    await ws_manager.broadcast(json.dumps({
         "type": "task_update",
         "task": updated_task,
-    }))
+    }), channel="tasks")
 
     return updated_task
 
@@ -642,11 +628,11 @@ async def create_log(data: LogCreate, request: Request):
         agent_id=data.agent_id,
         request_id=request_id,
     )
-    # Broadcast to WebSocket clients
-    await manager.broadcast(json.dumps({
+    # Broadcast to logs channel
+    await ws_manager.broadcast(json.dumps({
         "type": "new_log",
         "log": entry,
-    }))
+    }), channel="logs")
     return entry
 
 
@@ -777,9 +763,9 @@ async def delete_notification(notification_id: str):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+    client_id = await ws_manager.connect(websocket)
     await hermes.sync_fleet()
-    # Send current task counts on connect
+    # Send initial data on connect
     try:
         counts = task_repo.get_all_active_task_counts()
         await websocket.send_text(json.dumps({
@@ -790,9 +776,28 @@ async def websocket_endpoint(websocket: WebSocket):
         pass
     try:
         while True:
-            await websocket.receive_text()
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            msg_type = data.get("type")
+            if msg_type == "pong":
+                ws_manager.handle_pong(client_id)
+            elif msg_type == "subscribe":
+                channels = data.get("channels", [])
+                ws_manager.subscribe(client_id, channels)
+                await websocket.send_text(json.dumps({
+                    "type": "subscribed",
+                    "channels": list(ws_manager._clients[client_id].channels),
+                }))
+            elif msg_type == "unsubscribe":
+                channels = data.get("channels", [])
+                ws_manager.unsubscribe(client_id, channels)
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        await ws_manager.disconnect(client_id)
+    except Exception:
+        await ws_manager.disconnect(client_id)
 
 # ─── Background Tasks ─────────────────────────────────────────────
 
@@ -802,18 +807,20 @@ async def system_heartbeat():
             "type": "heartbeat",
             "status": "online",
             "active_nodes": len(hermes.agents),
-            "running": 6
+            "running": sum(1 for a in hermes.agents if a.get("status") == "active"),
+            "sleeping": sum(1 for a in hermes.agents if a.get("status") == "idle"),
+            "offline": sum(1 for a in hermes.agents if a.get("status") == "offline"),
         }
-        await manager.broadcast(json.dumps(status_update))
-        await asyncio.sleep(5)
+        await ws_manager.broadcast(json.dumps(status_update), channel="system")
+        await asyncio.sleep(ws_manager._heartbeat_interval)
 
-async def metrics_broadcast_loop():
-    """Broadcast metrics snapshot to all WebSocket clients every 5 seconds."""
+async def ws_metrics_broadcast_loop():
+    """Broadcast metrics + task counts every 5s, batched into one frame."""
     while True:
         await asyncio.sleep(5)
         try:
             await metrics_collector.update_system_metrics(
-                active_websockets=len(manager.active_connections),
+                active_websockets=ws_manager.connection_count,
                 total_agents=len(hermes.agents),
             )
             for agent in hermes.agents:
@@ -822,18 +829,13 @@ async def metrics_broadcast_loop():
                     await metrics_collector.register_agent(agent["id"], agent["name"])
 
             all_metrics = await metrics_collector.get_all_metrics()
-            
-            # Also broadcast task counts
             counts = task_repo.get_all_active_task_counts()
-            
-            await manager.broadcast(json.dumps({
-                "type": "metrics",
-                "data": all_metrics,
-            }))
-            await manager.broadcast(json.dumps({
-                "type": "task_counts",
-                "counts": counts,
-            }))
+
+            # Batch both messages to the metrics channel
+            await ws_manager.batch_broadcast([
+                json.dumps({"type": "metrics", "data": all_metrics}),
+                json.dumps({"type": "task_counts", "counts": counts}),
+            ], channel="metrics")
         except Exception as e:
             logger.error("Metrics broadcast error: %s", e)
 

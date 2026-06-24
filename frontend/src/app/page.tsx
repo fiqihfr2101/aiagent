@@ -32,7 +32,9 @@ export default function MissionControl() {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
-  const { agents, logs, systemOnline, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification, lastNewLog } = useWebSocket('ws://localhost:8000/ws');
+  const { agents, logs, systemOnline, connectionStatus, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification, lastNewLog } = useWebSocket('ws://localhost:8000/ws', {
+    channels: ['agents', 'tasks', 'metrics', 'logs', 'notifications', 'system'],
+  });
   const [globalLogs, setGlobalLogs] = useState<TaskLog[]>([]);
   const [globalLogsLoaded, setGlobalLogsLoaded] = useState(false);
   const [toast, setToast] = useState<{ message: string; visible: boolean; color: string }>({ message: '', visible: false, color: 'red' });
@@ -203,6 +205,17 @@ export default function MissionControl() {
         activeCount={`${stats.active_nodes} / 12 active`}
       >
         <NotificationBell newNotification={newNotificationProp} />
+        {/* Connection status indicator */}
+        <div className="flex items-center gap-1.5 ml-2">
+          <span className={`w-[5px] h-[5px] rounded-full ${
+            connectionStatus === 'connected' ? 'bg-grn-custom shadow-[0_0_5px_var(--grn)]' :
+            connectionStatus === 'connecting' ? 'bg-amber-400 animate-pulse' :
+            'bg-red-custom'
+          }`} />
+          <span className="text-[8px] font-mono text-txt3 tracking-wider uppercase">
+            {connectionStatus === 'connected' ? 'ws' : connectionStatus === 'connecting' ? 'reconnecting' : 'offline'}
+          </span>
+        </div>
       </NavBar>
 
       {activeL1 === 'overview' && (
