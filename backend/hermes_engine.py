@@ -104,12 +104,16 @@ class HermesEngine:
     async def submit_task(self, agent_id: str, title: str, priority: str = "medium"):
         """Submit a task and track it via metrics."""
         task_id = f"task-{agent_id}-{uuid.uuid4().hex[:8]}"
+        # Get agent's model for task context
+        agent = self.repo.get_by_id(agent_id)
+        model = agent.get("model", "claude-sonnet-4") if agent else "claude-sonnet-4"
         task = {
             "id": task_id,
             "agent_id": agent_id,
             "title": title,
             "priority": priority,
             "status": "pending",
+            "model": model,
             "created_at": datetime.datetime.now().isoformat(),
         }
         self.tasks.append(task)

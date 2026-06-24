@@ -3,6 +3,13 @@
 import React, { useState, useEffect } from 'react';
 import { Agent, TaskPriority } from '@/types';
 
+interface ModelInfo {
+  id: string;
+  name: string;
+  family: string;
+  rates: { input: number; output: number };
+}
+
 interface TaskDispatchModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -16,6 +23,21 @@ const TaskDispatchModal: React.FC<TaskDispatchModalProps> = ({ isOpen, onClose, 
   const [priority, setPriority] = useState<TaskPriority>('P2');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [overrideModel, setOverrideModel] = useState('');
+  const [showModelOverride, setShowModelOverride] = useState(false);
+
+  const selectedAgent = agents.find(a => a.id === agentId);
+
+  // Fetch available models
+  useEffect(() => {
+    if (isOpen) {
+      fetch('http://localhost:8000/models')
+        .then(res => res.json())
+        .then((data: ModelInfo[]) => setModels(data))
+        .catch(() => {});
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (preSelectedAgentId) {
@@ -28,11 +50,30 @@ const TaskDispatchModal: React.FC<TaskDispatchModalProps> = ({ isOpen, onClose, 
       setTitle('');
       setPriority('P2');
       setError('');
+      setOverrideModel('');
+      setShowModelOverride(false);
       if (!preSelectedAgentId && agents.length > 0) {
         setAgentId(agents[0].id);
       }
     }
   }, [isOpen, preSelectedAgentId, agents]);
+
+  const getFamilyColor = (family: string) => {
+    switch (family) {
+      case 'claude': return 'text-purple-400';
+      case 'gpt': return 'text-green-400';
+      case 'kimi': return 'text-blue-400';
+      default: return 'text-txt3';
+    }
+  };
+
+  const getModelFamily = (model?: string) => {
+    if (!model) return 'other';
+    if (model.includes('claude')) return 'claude';
+    if (model.includes('gpt')) return 'gpt';
+    if (model.includes('kimi')) return 'kimi';
+    return 'other';
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,6 +86,15 @@ const TaskDispatchModal: React.FC<TaskDispatchModalProps> = ({ isOpen, onClose, 
     setError('');
 
     try {
+      // If model override is set, update the agent's model first
+      if (showModelOverride && overrideModel && overrideModel !== selectedAgent?.model) {
+        await fetch(`http://localhost:8000/agents/${agentId}/model`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: overrideModel }),
+        });
+      }
+
       const response = await fetch('http://localhost:8000/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -117,7 +167,42 @@ const TaskDispatchModal: React.FC<TaskDispatchModalProps> = ({ isOpen, onClose, 
                 </option>
               ))}
             </select>
+            {/* Show agent's current model */}
+            {selectedAgent?.model && (
+              <div className="mt-1.5 flex items-center gap-2 text-[9px] font-mono">
+                <span className="text-txt3">Model:</span>
+                <span className={`font-semibold ${getFamilyColor(getModelFamily(selectedAgent.model))}`}>
+                  {selectedAgent.model}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowModelOverride(!showModelOverride)}
+                  className="text-cyan-custom/70 hover:text-cyan-custom underline transition-colors"
+                >
+                  {showModelOverride ? 'cancel override' : 'override'}
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* Model Override (optional) */}
+          {showModelOverride && (
+            <div className="animate-fadein">
+              <label className="block text-[9px] text-txt3 uppercase tracking-[0.14em] mb-1.5">
+                Override Model <span className="text-amb-custom">(changes agent&apos;s model)</span>
+              </label>
+              <select
+                value={overrideModel}
+                onChange={(e) => setOverrideModel(e.target.value)}
+                className="w-full bg-bg3 border border-amb-custom/30 rounded-lg px-3 py-2 text-xs text-txt font-mono focus:border-amb-custom/50 focus:outline-none transition-colors"
+              >
+                <option value="">Keep current ({selectedAgent?.model})</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Task Title */}
           <div>

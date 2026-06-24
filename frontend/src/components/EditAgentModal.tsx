@@ -3,6 +3,13 @@
 import React, { useState, useEffect } from 'react';
 import { Agent } from '../types';
 
+interface ModelInfo {
+  id: string;
+  name: string;
+  family: string;
+  rates: { input: number; output: number };
+}
+
 interface EditAgentModalProps {
   isOpen: boolean;
   agent: Agent | null;
@@ -10,19 +17,31 @@ interface EditAgentModalProps {
   onAgentUpdated: (agent: any) => void;
 }
 
-const MODEL_OPTIONS = [
-  'gpt-4o',
-  'claude-sonnet-4',
-  'claude-opus-4',
-  'kimi-k2',
-];
-
 const EditAgentModal: React.FC<EditAgentModalProps> = ({ isOpen, agent, onClose, onAgentUpdated }) => {
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [model, setModel] = useState('claude-sonnet-4');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [models, setModels] = useState<ModelInfo[]>([]);
+
+  // Fetch available models from backend
+  useEffect(() => {
+    if (isOpen) {
+      fetch('http://localhost:8000/models')
+        .then(res => res.json())
+        .then((data: ModelInfo[]) => setModels(data))
+        .catch(() => {
+          // Fallback models if fetch fails
+          setModels([
+            { id: 'gpt-4o', name: 'gpt-4o', family: 'gpt', rates: { input: 0.005, output: 0.015 } },
+            { id: 'claude-sonnet-4', name: 'claude-sonnet-4', family: 'claude', rates: { input: 0.003, output: 0.015 } },
+            { id: 'claude-opus-4', name: 'claude-opus-4', family: 'claude', rates: { input: 0.015, output: 0.075 } },
+            { id: 'kimi-k2', name: 'kimi-k2', family: 'kimi', rates: { input: 0.003, output: 0.015 } },
+          ]);
+        });
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (agent) {
@@ -31,6 +50,17 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ isOpen, agent, onClose,
       setModel(agent.model || 'claude-sonnet-4');
     }
   }, [agent]);
+
+  const getFamilyColor = (family: string) => {
+    switch (family) {
+      case 'claude': return 'text-purple-400';
+      case 'gpt': return 'text-green-400';
+      case 'kimi': return 'text-blue-400';
+      default: return 'text-txt3';
+    }
+  };
+
+  const selectedModelInfo = models.find(m => m.id === model);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,7 +80,8 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ isOpen, agent, onClose,
       });
 
       if (!res.ok) {
-        throw new Error('Failed to update agent');
+        const data = await res.json();
+        throw new Error(data.detail || 'Failed to update agent');
       }
 
       const updated = await res.json();
@@ -113,10 +144,22 @@ const EditAgentModal: React.FC<EditAgentModalProps> = ({ isOpen, agent, onClose,
               onChange={(e) => setModel(e.target.value)}
               className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono focus:outline-none focus:border-cyan-custom/50 transition-colors appearance-none cursor-pointer"
             >
-              {MODEL_OPTIONS.map((m) => (
-                <option key={m} value={m}>{m}</option>
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
+            {/* Model rate display */}
+            {selectedModelInfo && (
+              <div className="mt-1.5 flex items-center gap-2 text-[9px] font-mono">
+                <span className={`font-semibold ${getFamilyColor(selectedModelInfo.family)}`}>
+                  {selectedModelInfo.family.toUpperCase()}
+                </span>
+                <span className="text-txt3">·</span>
+                <span className="text-txt3">
+                  ${selectedModelInfo.rates.input}/1K in · ${selectedModelInfo.rates.output}/1K out
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-2 pt-2">

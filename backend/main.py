@@ -13,6 +13,7 @@ from hermes_engine import HermesEngine
 from app.infrastructure.memory_manager import MemoryManager
 from app.infrastructure.metrics_collector import MetricsCollector
 from app.infrastructure.task_repository import TaskRepository
+from app.infrastructure.agent_repository import VALID_MODELS
 from workflows.agent_workflow import AgentTaskWorkflow
 
 # Load environment variables
@@ -173,6 +174,8 @@ async def update_agent(agent_id: str, data: AgentUpdate):
     agent = hermes.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if data.model is not None and data.model not in VALID_MODELS:
+        raise HTTPException(status_code=400, detail=f"Invalid model: {data.model}. Valid models: {', '.join(sorted(VALID_MODELS))}")
     updated = await hermes.update_agent(
         agent_id,
         name=data.name,
@@ -180,6 +183,14 @@ async def update_agent(agent_id: str, data: AgentUpdate):
         model=data.model,
         status=data.status,
     )
+    # If model changed, broadcast model_update
+    if data.model and data.model != agent.get("model"):
+        await manager.broadcast(json.dumps({
+            "type": "model_update",
+            "agent_id": agent_id,
+            "model": data.model,
+            "agent": updated,
+        }))
     return updated
 
 @app.delete("/agents/{agent_id}")
@@ -196,9 +207,40 @@ async def update_agent_model(agent_id: str, data: ModelUpdate):
     agent = hermes.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if data.model not in VALID_MODELS:
+        raise HTTPException(status_code=400, detail=f"Invalid model: {data.model}. Valid models: {', '.join(sorted(VALID_MODELS))}")
     updated = await hermes.update_agent_model(agent_id, data.model)
+    # Broadcast model_update for immediate UI refresh
+    await manager.broadcast(json.dumps({
+        "type": "model_update",
+        "agent_id": agent_id,
+        "model": data.model,
+        "agent": updated,
+    }))
     return updated
 
+@app.get("/models")
+async def list_models():
+    """List available models with their rates."""
+    rates = await metrics_collector.get_model_rates()
+    models = []
+    for model_name in sorted(VALID_MODELS):
+        rate = rates.get(model_name, rates.get("default", {"input": 0.003, "output": 0.015}))
+        # Determine family for color-coding
+        family = "other"
+        if "claude" in model_name:
+            family = "claude"
+        elif "gpt" in model_name:
+            family = "gpt"
+        elif "kimi" in model_name:
+            family = "kimi"
+        models.append({
+            "id": model_name,
+            "name": model_name,
+            "family": family,
+            "rates": rate,
+        })
+    return models
 
 # ─── Task Dispatch Endpoints ──────────────────────────────────────
 
@@ -223,6 +265,7 @@ async def dispatch_task(task_data: TaskCreate):
                 "title": task_data.title,
                 "priority": task_data.priority,
                 "task_id": task["id"],
+                "model": agent.get("model", "claude-sonnet-4"),
             }
             handle = await temporal_client.start_workflow(
                 AgentTaskWorkflow.run,

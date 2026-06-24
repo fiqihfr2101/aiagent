@@ -30,9 +30,21 @@ export default function MissionControl() {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
-  const { agents, logs, systemOnline, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping } = useWebSocket('ws://localhost:8000/ws');
+  const { agents, logs, systemOnline, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate } = useWebSocket('ws://localhost:8000/ws');
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Show toast when a model is updated
+  useEffect(() => {
+    if (lastModelUpdate) {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      const agentName = agents.find(a => a.id === lastModelUpdate.agent_id)?.name || lastModelUpdate.agent_id;
+      setToast({ message: `🔄 ${agentName} model changed → ${lastModelUpdate.model}`, visible: true });
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast(prev => ({ ...prev, visible: false }));
+      }, 3000);
+    }
+  }, [lastModelUpdate, agents]);
 
   // Show toast when a task is stopped
   useEffect(() => {
@@ -99,6 +111,14 @@ export default function MissionControl() {
   };
 
   const activeAgent = agents.find(a => a.id === selectedAgentId);
+
+  const getModelBadgeColor = (model?: string) => {
+    if (!model) return 'text-txt3';
+    if (model.includes('claude')) return 'text-purple-400';
+    if (model.includes('gpt')) return 'text-green-400';
+    if (model.includes('kimi')) return 'text-blue-400';
+    return 'text-txt3';
+  };
 
   return (
     <div className="shell dotgrid flex flex-col h-screen overflow-hidden bg-bg text-txt font-sans selection:bg-cyan-custom/30">
@@ -281,7 +301,7 @@ export default function MissionControl() {
                   {activeAgent.status.toUpperCase()}
                 </span>
                 {activeAgent.model && (
-                  <span className="px-2 py-[2px] rounded-full text-[8px] font-bold font-mono border border-border-custom bg-[rgba(255,255,255,0.03)] text-purple-400">
+                  <span className={`px-2 py-[2px] rounded-full text-[8px] font-bold font-mono border border-border-custom bg-[rgba(255,255,255,0.03)] ${getModelBadgeColor(activeAgent.model)}`}>
                     {activeAgent.model}
                   </span>
                 )}
@@ -319,7 +339,7 @@ export default function MissionControl() {
                      </div>
                      <div className="bg-bg3 border border-border-custom rounded-lg p-3">
                        <div className="text-[8px] text-txt2 uppercase tracking-wider mb-1">Model</div>
-                       <div className="text-xs font-mono font-bold text-purple-400 truncate">{activeAgent.model || 'N/A'}</div>
+                       <div className={`text-xs font-mono font-bold truncate ${getModelBadgeColor(activeAgent.model)}`}>{activeAgent.model || 'N/A'}</div>
                      </div>
                    </div>
                    <div className="text-txt2 text-[11px] leading-relaxed">

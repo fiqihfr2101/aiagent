@@ -75,6 +75,7 @@ DEFAULT_MODEL_RATES: Dict[str, Dict[str, float]] = {
     "claude-opus-4": {"input": 0.015, "output": 0.075},
     "claude-3.5-sonnet": {"input": 0.003, "output": 0.015},
     "claude-3-haiku": {"input": 0.00025, "output": 0.00125},
+    "kimi-k2": {"input": 0.003, "output": 0.015},
     "default": {"input": 0.003, "output": 0.015},
 }
 

@@ -3,6 +3,19 @@ import uuid
 import datetime
 from typing import Optional, List, Dict, Any
 
+# Valid models that can be assigned to agents
+VALID_MODELS = {
+    "gpt-4",
+    "gpt-4-turbo",
+    "gpt-4o",
+    "gpt-3.5-turbo",
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "claude-3.5-sonnet",
+    "claude-3-haiku",
+    "kimi-k2",
+}
+
 
 class AgentRepository:
     """SQLite-backed agent storage with CRUD operations."""
@@ -71,6 +84,10 @@ class AgentRepository:
         updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
         if not updates:
             return self.get_by_id(agent_id)
+
+        # Validate model if being updated
+        if "model" in updates and updates["model"] not in VALID_MODELS:
+            raise ValueError(f"Invalid model: {updates['model']}. Valid models: {', '.join(sorted(VALID_MODELS))}")
 
         updates["updated_at"] = datetime.datetime.now().isoformat()
         set_clause = ", ".join(f"{k} = ?" for k in updates)

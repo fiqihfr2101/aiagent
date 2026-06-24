@@ -17,6 +17,7 @@ export const useWebSocket = (url: string) => {
   const [lastTaskUpdate, setLastTaskUpdate] = useState<any>(null);
   const [lastStoppedTask, setLastStoppedTask] = useState<StoppedTaskEvent | null>(null);
   const [stoppingAgentIds, setStoppingAgentIds] = useState<Set<string>>(new Set());
+  const [lastModelUpdate, setLastModelUpdate] = useState<{ agent_id: string; model: string } | null>(null);
   
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -49,6 +50,9 @@ export const useWebSocket = (url: string) => {
           setLastTaskUpdate(data.task);
           // Refresh task counts on task update
           fetchTaskCounts();
+        } else if (data.type === 'model_update') {
+          // Model changed — fleet_update will follow, but set state for immediate feedback
+          setLastModelUpdate({ agent_id: data.agent_id, model: data.model });
         } else if (data.type === 'task_stopped') {
           const stoppedTask = data.task;
           setLastStoppedTask({
@@ -105,5 +109,5 @@ export const useWebSocket = (url: string) => {
     setStoppingAgentIds(prev => new Set(prev).add(agentId));
   };
 
-  return { agents, logs, systemOnline, stats, taskCounts, lastTaskUpdate, lastStoppedTask, stoppingAgentIds, markAgentStopping };
+  return { agents, logs, systemOnline, stats, taskCounts, lastTaskUpdate, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate };
 };
