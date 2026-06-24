@@ -11,7 +11,7 @@ export interface StoppedTaskEvent {
 }
 
 // Channel types matching backend
-type Channel = 'agents' | 'tasks' | 'metrics' | 'logs' | 'notifications' | 'system';
+type Channel = 'agents' | 'tasks' | 'metrics' | 'logs' | 'notifications' | 'system' | 'messages';
 
 interface UseWebSocketOptions {
   channels?: Channel[];
@@ -25,7 +25,7 @@ export const useWebSocket = (
   options: UseWebSocketOptions = {},
 ) => {
   const {
-    channels = ['agents', 'tasks', 'metrics', 'logs', 'notifications', 'system'],
+    channels = ['agents', 'tasks', 'metrics', 'logs', 'notifications', 'system', 'messages'],
     reconnectBaseMs = 1000,
     reconnectMaxMs = 30000,
     messageBufferMax = 200,
@@ -43,6 +43,7 @@ export const useWebSocket = (
   const [lastModelUpdate, setLastModelUpdate] = useState<{ agent_id: string; model: string } | null>(null);
   const [lastNotification, setLastNotification] = useState<any>(null);
   const [lastNewLog, setLastNewLog] = useState<TaskLog | null>(null);
+  const [lastAgentMessage, setLastAgentMessage] = useState<any>(null);
   
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -107,6 +108,8 @@ export const useWebSocket = (
       setLastNotification(data.notification);
     } else if (data.type === 'new_log') {
       setLastNewLog(data.log);
+    } else if (data.type === 'agent_message') {
+      setLastAgentMessage(data.message);
     } else if (data.type === 'ping') {
       // Reply with pong for heartbeat
       if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -203,5 +206,5 @@ export const useWebSocket = (
     setStoppingAgentIds(prev => new Set(prev).add(agentId));
   };
 
-  return { agents, logs, systemOnline, connectionStatus, stats, taskCounts, lastTaskUpdate, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification, lastNewLog };
+  return { agents, logs, systemOnline, connectionStatus, stats, taskCounts, lastTaskUpdate, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification, lastNewLog, lastAgentMessage };
 };

@@ -6,6 +6,7 @@ from typing import Optional
 
 from app.infrastructure.metrics_collector import MetricsCollector
 from app.infrastructure.agent_repository import AgentRepository
+from app.infrastructure.message_bus import MessageBus
 
 
 class HermesEngine:
@@ -17,6 +18,7 @@ class HermesEngine:
         self.tasks = []
         self.logs = []
         self.task_repo = task_repo
+        self.message_bus = MessageBus()
 
     async def initialize(self):
         """Load agents from DB, seed defaults if empty."""
@@ -148,3 +150,48 @@ class HermesEngine:
             token_usage=token_usage,
         )
         await self.log("SYSTEM", "INFO", f"Task {task_id} completed: {'success' if success else 'failed'}")
+
+    # ─── Messaging ─────────────────────────────────────────────────
+
+    async def send_message(
+        self,
+        from_agent_id: str,
+        to_agent_id: str | None,
+        msg_type: str,
+        subject: str = "",
+        body: str = "",
+        metadata: dict | None = None,
+    ) -> dict:
+        """Send a message between agents via the message bus."""
+        msg = self.message_bus.send(
+            from_agent_id=from_agent_id,
+            to_agent_id=to_agent_id,
+            msg_type=msg_type,
+            subject=subject,
+            body=body,
+            metadata=metadata,
+        )
+        # Log the message event
+        sender = self.repo.get_by_id(from_agent_id)
+        sender_name = sender["name"] if sender else from_agent_id
+        if msg_type == "broadcast":
+            await self.log(sender_name, "INFO", f"Broadcast: {subject}")
+        elif msg_type == "delegation":
+            recipient = self.repo.get_by_id(to_agent_id) if to_agent_id else None
+            rec_name = recipient["name"] if recipient else to_agent_id
+            await self.log(sender_name, "INFO", f"Delegated to {rec_name}: {subject}")
+        else:
+            await self.log(sender_name, "INFO", f"Message sent: {subject}")
+        return msg
+
+    def get_messages(self, agent_id: str, **kwargs) -> dict:
+        """Get messages for an agent."""
+        return self.message_bus.get_messages(agent_id, **kwargs)
+
+    def get_thread(self, agent_a: str, agent_b: str) -> list:
+        """Get conversation thread between two agents."""
+        return self.message_bus.get_thread(agent_a, agent_b)
+
+    def get_conversations(self, agent_id: str) -> list:
+        """Get conversation list for an agent."""
+        return self.message_bus.get_conversations(agent_id)

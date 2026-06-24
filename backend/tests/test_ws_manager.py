@@ -18,7 +18,7 @@ class TestWSManagerChannels:
         assert "system" in CHANNELS
 
     def test_channels_count(self):
-        assert len(CHANNELS) == 6
+        assert len(CHANNELS) == 7
 
 
 class TestWSClient:

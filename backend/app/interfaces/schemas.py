@@ -493,6 +493,77 @@ class RegisterRaw(BaseModel):
         return sanitize_plain(v)
 
 
+
+# ─── Message Bus Schemas ──────────────────────────────────────
+
+VALID_MESSAGE_TYPES = {"direct", "broadcast", "delegation"}
+
+
+class MessageSend(BaseModel):
+    """Schema for sending a message between agents."""
+    from_agent_id: str = Field(
+        ..., min_length=1, max_length=100, description="Sender agent ID",
+    )
+    to_agent_id: Optional[str] = Field(
+        None, max_length=100, description="Recipient agent ID (None for broadcast)",
+    )
+    type: str = Field(
+        ..., min_length=1, max_length=20, description="Message type: direct, broadcast, delegation",
+    )
+    subject: str = Field(default="", max_length=500, description="Message subject")
+    body: str = Field(default="", max_length=10000, description="Message body")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata (e.g. delegated task info)")
+
+    @field_validator("from_agent_id")
+    @classmethod
+    def validate_from_agent(cls, v: str) -> str:
+        v = sanitize_plain(v)
+        if not AGENT_ID_PATTERN.match(v):
+            raise ValueError("Sender agent ID contains invalid characters")
+        return v
+
+    @field_validator("to_agent_id")
+    @classmethod
+    def validate_to_agent(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = sanitize_plain(v)
+        if not AGENT_ID_PATTERN.match(v):
+            raise ValueError("Recipient agent ID contains invalid characters")
+        return v
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        v = sanitize_plain(v).lower()
+        if v not in VALID_MESSAGE_TYPES:
+            raise ValueError(f"Invalid message type. Must be one of: {', '.join(sorted(VALID_MESSAGE_TYPES))}")
+        return v
+
+    @field_validator("subject")
+    @classmethod
+    def validate_subject(cls, v: str) -> str:
+        return sanitize_plain(v)
+
+    @field_validator("body")
+    @classmethod
+    def validate_body(cls, v: str) -> str:
+        return sanitize_plain(v)
+
+
+class MessageMarkRead(BaseModel):
+    """Schema for marking a message as read."""
+    id: str = Field(..., min_length=1, max_length=100, description="Message ID")
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        v = sanitize_plain(v)
+        if not AGENT_ID_PATTERN.match(v):
+            raise ValueError("Message ID contains invalid characters")
+        return v
+
+
 class TaskSubmit(BaseModel):
     """Schema for /task endpoint (Temporal workflow trigger)."""
     agent_id: str = Field(..., min_length=1, max_length=100)
@@ -518,4 +589,38 @@ class TaskSubmit(BaseModel):
         v = v.strip().upper()
         if v not in VALID_PRIORITIES:
             raise ValueError(f"Invalid priority")
+        return v
+
+
+# ─── Workflow Schemas ──────────────────────────────────────────
+
+class WorkflowCreate(BaseModel):
+    """Schema for creating a workflow."""
+    name: str = Field(..., min_length=1, max_length=200, description="Workflow name")
+    nodes: List[Dict[str, Any]] = Field(..., description="React Flow nodes")
+    edges: List[Dict[str, Any]] = Field(..., description="React Flow edges")
+    viewport: Optional[Dict[str, Any]] = Field(None, description="Viewport state")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = sanitize_plain(v)
+        if not v:
+            raise ValueError("Name cannot be empty")
+        return v
+
+
+class WorkflowUpdate(BaseModel):
+    """Schema for updating a workflow."""
+    name: str = Field(..., min_length=1, max_length=200)
+    nodes: List[Dict[str, Any]] = Field(...)
+    edges: List[Dict[str, Any]] = Field(...)
+    viewport: Optional[Dict[str, Any]] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = sanitize_plain(v)
+        if not v:
+            raise ValueError("Name cannot be empty")
         return v

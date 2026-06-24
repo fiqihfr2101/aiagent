@@ -20,6 +20,8 @@ const EditAgentModal = lazy(() => import('@/components/EditAgentModal'));
 const TaskDispatchModal = lazy(() => import('@/components/TaskDispatchModal'));
 const TaskHistory = lazy(() => import('@/components/TaskHistory'));
 const TaskLogs = lazy(() => import('@/components/TaskLogs'));
+const MessageCenter = lazy(() => import('@/components/MessageCenter'));
+const WorkflowBuilder = lazy(() => import('@/components/WorkflowBuilder'));
 
 // Loading fallback for lazy components
 const ComponentLoader = () => (
@@ -42,8 +44,8 @@ export default function MissionControl() {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
-  const { agents, logs, systemOnline, connectionStatus, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification, lastNewLog } = useWebSocket('ws://localhost:8000/ws', {
-    channels: ['agents', 'tasks', 'metrics', 'logs', 'notifications', 'system'],
+  const { agents, logs, systemOnline, connectionStatus, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification, lastNewLog, lastAgentMessage } = useWebSocket('ws://localhost:8000/ws', {
+    channels: ['agents', 'tasks', 'metrics', 'logs', 'notifications', 'system', 'messages'],
   });
   const [globalLogs, setGlobalLogs] = useState<TaskLog[]>([]);
   const [globalLogsLoaded, setGlobalLogsLoaded] = useState(false);
@@ -386,6 +388,22 @@ export default function MissionControl() {
           <div className="view on h-full animate-fadein">
             <Suspense fallback={<ComponentLoader />}>
               <CostDashboard />
+            </Suspense>
+          </div>
+        )}
+
+        {activeL1 === 'workflows' && (
+          <div className="view on h-full animate-fadein">
+            <Suspense fallback={<ComponentLoader />}>
+              <WorkflowBuilder />
+            </Suspense>
+          </div>
+        )}
+
+        {activeL1 === 'messages' && (
+          <div className="view on h-full animate-fadein">
+            <Suspense fallback={<ComponentLoader />}>
+              <MessageCenter agents={agents} lastAgentMessage={lastAgentMessage} />
             </Suspense>
           </div>
         )}

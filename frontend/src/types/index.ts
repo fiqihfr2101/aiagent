@@ -95,3 +95,31 @@ export interface TaskLogsResponse {
   limit: number;
   offset: number;
 }
+
+// ─── Message Bus Types ──────────────────────────────────────────
+export type MessageType = 'direct' | 'broadcast' | 'delegation';
+
+export interface AgentMessage {
+  id: string;
+  type: MessageType;
+  from_agent_id: string;
+  to_agent_id: string | null;
+  subject: string;
+  body: string;
+  metadata: Record<string, any> | null;
+  read: boolean;
+  created_at: string;
+}
+
+export interface MessagesResponse {
+  messages: AgentMessage[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface Conversation {
+  agent_id: string;
+  last_message_at: string;
+  message_count: number;
+}

@@ -29,9 +29,11 @@ const NavBar: React.FC<NavBarProps> = memo(({ activeL1, setActiveL1, systemStatu
       <div className="flex items-center gap-[1px] flex-1">
         {[
           { id: 'overview', label: 'Dashboard' },
+          { id: 'messages', label: 'Messages' },
           { id: 'memory', label: 'Memory' },
           { id: 'analytics-main', label: 'Analytics' },
           { id: 'costs', label: 'Costs' },
+          { id: 'workflows', label: 'Workflows' },
         ].map((tab) => (
           <div
             key={tab.id}

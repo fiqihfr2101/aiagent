@@ -13,7 +13,7 @@ from fastapi import WebSocket
 logger = logging.getLogger("hermes.ws")
 
 # Available channels
-CHANNELS = {"agents", "tasks", "metrics", "logs", "notifications", "system"}
+CHANNELS = {"agents", "tasks", "metrics", "logs", "notifications", "system", "messages"}
 
 
 @dataclass

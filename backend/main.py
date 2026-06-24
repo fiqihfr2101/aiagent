@@ -21,6 +21,7 @@ from app.infrastructure.agent_repository import VALID_MODELS
 from app.infrastructure.notification_service import NotificationService
 from app.infrastructure.cache_service import cache
 from app.infrastructure.ws_manager import ws_manager, CHANNELS
+from app.infrastructure.workflow_repository import WorkflowRepository
 from workflows.agent_workflow import AgentTaskWorkflow
 from app.infrastructure.auth_service import (
     LoginRequest, RefreshRequest, LogoutRequest,
@@ -35,7 +36,9 @@ from app.interfaces.schemas import (
     NotificationCreate, NotificationRead,
     LogCreate as SchemaLogCreate, LogReceive, RegisterRaw,
     MetricsCollect, ModelRateUpdate,
+    MessageSend, MessageMarkRead,
     sanitize_plain, sanitize_text,
+    WorkflowCreate, WorkflowUpdate,
 )
 
 # ─── Input Sanitization Helpers ─────────────────────────────────
@@ -138,7 +141,7 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     # Ensure JSON responses use correct Content-Type
-    if request.url.path.startswith("/api/") or request.url.path.startswith("/auth/") or request.url.path.startswith("/agents") or request.url.path.startswith("/tasks") or request.url.path.startswith("/metrics") or request.url.path.startswith("/notifications"):
+    if request.url.path.startswith("/api/") or request.url.path.startswith("/auth/") or request.url.path.startswith("/agents") or request.url.path.startswith("/tasks") or request.url.path.startswith("/metrics") or request.url.path.startswith("/notifications") or request.url.path.startswith("/messages"):
         if "content-type" not in response.headers:
             response.headers["Content-Type"] = "application/json; charset=utf-8"
     return response
@@ -224,6 +227,7 @@ log_repo = LogRepository()
 task_repo = TaskRepository(log_repo=log_repo)
 hermes = HermesEngine(_broadcast_shim, metrics_collector, task_repo=task_repo)
 notification_svc = NotificationService()
+workflow_repo = WorkflowRepository()
 # Track active simulated tasks so they can be cancelled
 _active_sim_tasks: dict[str, asyncio.Task] = {}
 
@@ -895,6 +899,88 @@ async def delete_notification(notification_id: str):
         raise HTTPException(status_code=404, detail="Notification not found")
     return {"status": "deleted", "id": notification_id}
 
+# ─── Message Bus Endpoints ────────────────────────────────────────
+
+@app.post("/messages")
+async def send_message(data: MessageSend):
+    """Send a message between agents."""
+    # Verify sender exists
+    sender = hermes.get_agent(data.from_agent_id)
+    if not sender:
+        raise HTTPException(status_code=404, detail="Sender agent not found")
+
+    # Verify recipient exists (skip for broadcast)
+    if data.to_agent_id and data.type != "broadcast":
+        recipient = hermes.get_agent(data.to_agent_id)
+        if not recipient:
+            raise HTTPException(status_code=404, detail="Recipient agent not found")
+
+    # For broadcast, to_agent_id should be None
+    to_id = None if data.type == "broadcast" else data.to_agent_id
+
+    msg = await hermes.send_message(
+        from_agent_id=data.from_agent_id,
+        to_agent_id=to_id,
+        msg_type=data.type,
+        subject=data.subject,
+        body=data.body,
+        metadata=data.metadata,
+    )
+
+    # Broadcast via WebSocket for real-time delivery
+    await ws_manager.broadcast(json.dumps({
+        "type": "agent_message",
+        "message": msg,
+    }), channel="messages")
+
+    return msg
+
+@app.get("/messages/{agent_id}")
+async def get_messages(
+    agent_id: str,
+    msg_type: Optional[str] = None,
+    unread_only: bool = False,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """Get messages for an agent."""
+    # Verify agent exists
+    agent = hermes.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return hermes.get_messages(
+        agent_id=agent_id,
+        msg_type=msg_type,
+        unread_only=unread_only,
+        limit=limit,
+        offset=offset,
+    )
+
+@app.get("/messages/{agent_id}/thread/{other_agent_id}")
+async def get_message_thread(agent_id: str, other_agent_id: str, limit: int = Query(50, ge=1, le=200)):
+    """Get conversation thread between two agents."""
+    return hermes.get_thread(agent_id, other_agent_id)
+
+@app.get("/messages/{agent_id}/conversations")
+async def get_conversations(agent_id: str):
+    """Get list of conversations for an agent."""
+    return hermes.get_conversations(agent_id)
+
+@app.post("/messages/{msg_id}/read")
+async def mark_message_read(msg_id: str):
+    """Mark a message as read."""
+    success = hermes.message_bus.mark_read(msg_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {"status": "ok", "id": msg_id}
+
+@app.post("/messages/{agent_id}/read-all")
+async def mark_all_messages_read(agent_id: str):
+    """Mark all messages for an agent as read."""
+    count = hermes.message_bus.mark_all_read(agent_id)
+    return {"status": "ok", "marked": count}
+
 # ─── WebSocket ────────────────────────────────────────────────────
 
 @app.websocket("/ws")
@@ -974,6 +1060,127 @@ async def ws_metrics_broadcast_loop():
             ], channel="metrics")
         except Exception as e:
             logger.error("Metrics broadcast error: %s", e)
+
+# ─── Workflow CRUD Endpoints ─────────────────────────────────────
+
+@app.post("/workflows")
+async def create_workflow(data: WorkflowCreate):
+    """Create a new visual workflow."""
+    wf = workflow_repo.create(data.name, data.nodes, data.edges, data.viewport)
+    return wf
+
+
+@app.get("/workflows")
+async def list_workflows():
+    """List all workflows."""
+    workflows = workflow_repo.get_all()
+    return {"workflows": workflows}
+
+
+@app.get("/workflows/{wf_id}")
+async def get_workflow(wf_id: str):
+    """Get a workflow by ID."""
+    wf = workflow_repo.get_by_id(wf_id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return wf
+
+
+@app.put("/workflows/{wf_id}")
+async def update_workflow(wf_id: str, data: WorkflowUpdate):
+    """Update a workflow."""
+    wf = workflow_repo.update(wf_id, data.name, data.nodes, data.edges, data.viewport)
+    if not wf:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return wf
+
+
+@app.delete("/workflows/{wf_id}")
+async def delete_workflow(wf_id: str):
+    """Delete a workflow."""
+    success = workflow_repo.delete(wf_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return {"status": "deleted", "id": wf_id}
+
+
+@app.post("/workflows/{wf_id}/execute")
+async def execute_workflow(wf_id: str):
+    """Execute a workflow via Temporal.io."""
+    wf = workflow_repo.get_by_id(wf_id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    if not temporal_client:
+        raise HTTPException(status_code=503, detail="Temporal client not connected")
+
+    # Convert visual workflow to Temporal task execution
+    # Walk the node graph and dispatch agent nodes sequentially
+    nodes = wf.get("nodes", [])
+    edges = wf.get("edges", [])
+    trigger_nodes = [n for n in nodes if n.get("type") == "trigger"]
+    agent_nodes = [n for n in nodes if n.get("type") == "agent"]
+
+    if not agent_nodes:
+        raise HTTPException(status_code=400, detail="Workflow has no agent nodes to execute")
+
+    executed_tasks = []
+    for agent_node in agent_nodes:
+        node_data = agent_node.get("data", {})
+        config = node_data.get("config", {})
+        agent_id = config.get("agentId", "")
+        label = node_data.get("label", "Workflow Task")
+
+        if not agent_id:
+            continue
+
+        task_data = {
+            "agent_id": agent_id,
+            "title": f"[Workflow: {wf['name']}] {label}",
+            "priority": config.get("priority", "P2"),
+        }
+
+        try:
+            handle = await temporal_client.start_workflow(
+                AgentTaskWorkflow.run,
+                task_data,
+                id=f"wf-{wf_id}-task-{agent_id}-{__import__('os').urandom(4).hex()}",
+                task_queue="hermes-task-queue",
+            )
+            executed_tasks.append({"agent_id": agent_id, "workflow_id": handle.id})
+        except Exception as e:
+            logger.error("Failed to execute workflow node %s: %s", agent_node.get("id"), e)
+            executed_tasks.append({"agent_id": agent_id, "error": str(e)})
+
+    # Update node statuses in workflow definition
+    for node in nodes:
+        if node.get("type") == "agent":
+            node.setdefault("data", {})["status"] = "running"
+    workflow_repo.update(wf_id, wf["name"], nodes, edges, wf.get("viewport"))
+
+    await _emit_notification(
+        "task_completed",
+        f"Workflow Executed: {wf['name']}",
+        f"Dispatched {len(executed_tasks)} agent task(s)",
+        {"workflow_id": wf_id, "tasks": executed_tasks},
+    )
+
+    return {
+        "workflow_id": wf_id,
+        "tasks_dispatched": len(executed_tasks),
+        "tasks": executed_tasks,
+    }
+
+
+@app.get("/workflows/{wf_id}/versions")
+async def get_workflow_versions(wf_id: str):
+    """Get version history for a workflow."""
+    wf = workflow_repo.get_by_id(wf_id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    versions = workflow_repo.get_versions(wf_id)
+    return {"versions": versions}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
