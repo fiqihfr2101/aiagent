@@ -19,6 +19,7 @@ from app.infrastructure.task_repository import TaskRepository
 from app.infrastructure.log_repository import LogRepository
 from app.infrastructure.agent_repository import VALID_MODELS
 from app.infrastructure.notification_service import NotificationService
+from app.infrastructure.cache_service import cache
 from workflows.agent_workflow import AgentTaskWorkflow
 
 # Load environment variables
@@ -53,6 +54,19 @@ async def request_id_middleware(request: Request, call_next):
     response = await call_next(request)
     duration_ms = round((time.time() - start_time) * 1000, 1)
     response.headers["X-Request-ID"] = request_id
+    # Cache headers for GET requests
+    if request.method == "GET":
+        path = request.url.path
+        if path.startswith("/agents"):
+            response.headers["Cache-Control"] = "public, max-age=30"
+        elif path.startswith("/tasks"):
+            response.headers["Cache-Control"] = "public, max-age=10"
+        elif path.startswith("/metrics"):
+            response.headers["Cache-Control"] = "public, max-age=60"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+    else:
+        response.headers["Cache-Control"] = "no-cache"
     logger.info(
         "%s %s → %s (%.1fms) [req=%s]",
         request.method, request.url.path, response.status_code, duration_ms, request_id,
@@ -162,6 +176,8 @@ class NotificationRead(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     global temporal_client
+    # Connect to Redis cache
+    await cache.connect()
     # Initialize engine (loads agents from DB)
     await hermes.initialize()
 
@@ -221,6 +237,23 @@ async def get_memories(agent_id: str):
 
 # ─── Agent CRUD Endpoints ─────────────────────────────────────────
 
+@app.get("/cache/status")
+async def cache_status():
+    """Get Redis cache status and statistics."""
+    info = await cache.info()
+    hit_rate = None
+    if info.get("hits") and info.get("misses"):
+        total = info["hits"] + info["misses"]
+        hit_rate = round(info["hits"] / total * 100, 1) if total > 0 else 0
+    return {
+        "available": info.get("available", False),
+        "hits": info.get("hits", 0),
+        "misses": info.get("misses", 0),
+        "hit_rate_percent": hit_rate,
+        "connected_clients": info.get("connected_clients", 0),
+        "used_memory": info.get("used_memory_human", "N/A"),
+    }
+
 @app.post("/agents")
 async def create_agent(agent_data: AgentCreate):
     """Register a new agent."""
@@ -232,19 +265,31 @@ async def create_agent(agent_data: AgentCreate):
         f"Role: {agent_data.role} · Model: {agent_data.model}",
         {"agent_id": agent.get("id"), "name": agent_data.name, "model": agent_data.model},
     )
+    # Invalidate agent cache on creation
+    await cache.invalidate_agents()
     return agent
 
 @app.get("/agents")
 async def list_agents():
     """List all agents."""
-    return hermes.get_agents()
+    cached = await cache.get("agents:list")
+    if cached is not None:
+        return cached
+    result = hermes.get_agents()
+    await cache.set("agents:list", result, ttl=30)
+    return result
 
 @app.get("/agents/{agent_id}")
 async def get_agent(agent_id: str):
     """Get agent detail by ID."""
+    cache_key = f"agents:detail:{agent_id}"
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        return cached
     agent = hermes.get_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    await cache.set(cache_key, agent, ttl=30)
     return agent
 
 @app.put("/agents/{agent_id}")
@@ -270,6 +315,8 @@ async def update_agent(agent_id: str, data: AgentUpdate):
             "model": data.model,
             "agent": updated,
         }))
+    # Invalidate agent cache on update
+    await cache.invalidate_agents()
     return updated
 
 @app.delete("/agents/{agent_id}")
@@ -278,6 +325,8 @@ async def delete_agent(agent_id: str):
     success = await hermes.delete_agent(agent_id)
     if not success:
         raise HTTPException(status_code=404, detail="Agent not found")
+    # Invalidate agent cache on deletion
+    await cache.invalidate_agents()
     return {"status": "deleted", "id": agent_id}
 
 @app.put("/agents/{agent_id}/model")
@@ -296,6 +345,8 @@ async def update_agent_model(agent_id: str, data: ModelUpdate):
         "model": data.model,
         "agent": updated,
     }))
+    # Invalidate agent cache on model update
+    await cache.invalidate_agents()
     return updated
 
 @app.get("/models")
@@ -375,6 +426,8 @@ async def dispatch_task(task_data: TaskCreate):
         "task": task,
     }))
 
+    # Invalidate task cache on new dispatch
+    await cache.invalidate_tasks()
     return task
 
 
@@ -504,6 +557,8 @@ async def stop_task(task_id: str):
         "task": updated_task,
     }))
 
+    # Invalidate task cache on stop
+    await cache.invalidate_tasks()
     return updated_task
 
 
@@ -513,7 +568,13 @@ async def list_tasks(
     status: Optional[str] = None,
 ):
     """List tasks with optional filters."""
-    return task_repo.get_all(agent_id=agent_id, status=status)
+    cache_key = f"tasks:list:{agent_id or 'all'}:{status or 'all'}"
+    cached = await cache.get(cache_key)
+    if cached is not None:
+        return cached
+    result = task_repo.get_all(agent_id=agent_id, status=status)
+    await cache.set(cache_key, result, ttl=10)
+    return result
 
 
 @app.post("/tasks/{task_id}/status")
@@ -594,17 +655,32 @@ async def create_log(data: LogCreate, request: Request):
 @app.get("/metrics")
 async def get_all_metrics():
     """Return all metrics (agents, tasks, system)."""
-    return await metrics_collector.get_all_metrics()
+    cached = await cache.get("metrics:all")
+    if cached is not None:
+        return cached
+    result = await metrics_collector.get_all_metrics()
+    await cache.set("metrics:all", result, ttl=60)
+    return result
 
 @app.get("/metrics/agents")
 async def get_agent_metrics():
     """Return agent-specific metrics."""
-    return await metrics_collector.get_all_agent_metrics()
+    cached = await cache.get("metrics:agents")
+    if cached is not None:
+        return cached
+    result = await metrics_collector.get_all_agent_metrics()
+    await cache.set("metrics:agents", result, ttl=60)
+    return result
 
 @app.get("/metrics/system")
 async def get_system_metrics():
     """Return system-wide metrics."""
-    return await metrics_collector.get_system_metrics()
+    cached = await cache.get("metrics:system")
+    if cached is not None:
+        return cached
+    result = await metrics_collector.get_system_metrics()
+    await cache.set("metrics:system", result, ttl=60)
+    return result
 
 @app.post("/metrics/collect")
 async def collect_metrics(request: Request):
@@ -619,17 +695,32 @@ async def collect_metrics(request: Request):
 @app.get("/metrics/costs")
 async def get_cost_summary():
     """Get total cost summary with trend."""
-    return await metrics_collector.get_cost_summary()
+    cached = await cache.get("metrics:costs:summary")
+    if cached is not None:
+        return cached
+    result = await metrics_collector.get_cost_summary()
+    await cache.set("metrics:costs:summary", result, ttl=60)
+    return result
 
 @app.get("/metrics/costs/agents")
 async def get_cost_by_agent():
     """Get cost breakdown by agent."""
-    return await metrics_collector.get_cost_by_agent()
+    cached = await cache.get("metrics:costs:by_agent")
+    if cached is not None:
+        return cached
+    result = await metrics_collector.get_cost_by_agent()
+    await cache.set("metrics:costs:by_agent", result, ttl=60)
+    return result
 
 @app.get("/metrics/costs/models")
 async def get_cost_by_model():
     """Get cost breakdown by model."""
-    return await metrics_collector.get_cost_by_model()
+    cached = await cache.get("metrics:costs:by_model")
+    if cached is not None:
+        return cached
+    result = await metrics_collector.get_cost_by_model()
+    await cache.set("metrics:costs:by_model", result, ttl=60)
+    return result
 
 @app.get("/metrics/costs/daily")
 async def get_cost_daily(days: int = Query(30, ge=1, le=365)):

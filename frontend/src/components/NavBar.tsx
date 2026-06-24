@@ -1,6 +1,8 @@
 
 import React from 'react';
 
+import CacheStatusIndicator from './CacheStatusIndicator';
+
 interface NavBarProps {
   activeL1: string;
   setActiveL1: (l1: string) => void;
@@ -43,6 +45,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeL1, setActiveL1, systemStatus, ac
         ))}
       </div>
       <div className="flex items-center gap-2 ml-auto">
+        <CacheStatusIndicator />
         <div className={`flex items-center gap-[5px] px-[9px] py-1 rounded-[10px] text-[9px] font-semibold font-mono tracking-[0.06em] ${
           systemStatus === 'ONLINE' ? 'bg-[rgba(34,197,94,0.08)] border border-[rgba(34,197,94,0.2)] text-grn-custom' : 'bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.2)] text-red-custom'
         }`}>

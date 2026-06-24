@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { cachedFetch } from '@/utils/apiCache';
 import {
   PieChart, Pie, Cell, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -51,24 +52,24 @@ const CostDashboard: React.FC = () => {
   const [dailyCosts, setDailyCosts] = useState<DailyCost[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchCosts = async () => {
+  const fetchCosts = useCallback(async () => {
     try {
-      const [summaryRes, agentRes, modelRes, dailyRes] = await Promise.all([
-        fetch(`${API}/metrics/costs`),
-        fetch(`${API}/metrics/costs/agents`),
-        fetch(`${API}/metrics/costs/models`),
-        fetch(`${API}/metrics/costs/daily`),
+      const [summary, agentCosts, modelCosts, dailyCosts] = await Promise.all([
+        cachedFetch<CostSummary>(`${API}/metrics/costs`, undefined, 30000),
+        cachedFetch<AgentCost[]>(`${API}/metrics/costs/agents`, undefined, 30000),
+        cachedFetch<ModelCost[]>(`${API}/metrics/costs/models`, undefined, 30000),
+        cachedFetch<DailyCost[]>(`${API}/metrics/costs/daily`, undefined, 30000),
       ]);
-      if (summaryRes.ok) setSummary(await summaryRes.json());
-      if (agentRes.ok) setAgentCosts(await agentRes.json());
-      if (modelRes.ok) setModelCosts(await modelRes.json());
-      if (dailyRes.ok) setDailyCosts(await dailyRes.json());
+      setSummary(summary);
+      setAgentCosts(agentCosts);
+      setModelCosts(modelCosts);
+      setDailyCosts(dailyCosts);
     } catch (err) {
       console.error('Failed to fetch cost data:', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchCosts();

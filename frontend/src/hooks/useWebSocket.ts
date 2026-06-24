@@ -1,5 +1,7 @@
 
 import { useEffect, useRef, useState } from 'react';
+import { useDebouncedCallback } from './useDebounce';
+import { apiCache } from '../utils/apiCache';
 import { Agent, FeedItem, LogEntry, TaskCounts, TaskLog } from '../types';
 
 export interface StoppedTaskEvent {
@@ -94,17 +96,24 @@ export const useWebSocket = (url: string) => {
     };
   }, [url]);
 
-  const fetchTaskCounts = async () => {
+  const fetchTaskCounts = useDebouncedCallback(async () => {
     try {
+      // Check local cache first (5s TTL)
+      const cached = apiCache.get<TaskCounts>('GET:http://localhost:8000/tasks/counts');
+      if (cached) {
+        setTaskCounts(cached);
+        return;
+      }
       const res = await fetch('http://localhost:8000/tasks/counts');
       if (res.ok) {
         const counts = await res.json();
         setTaskCounts(counts);
+        apiCache.set('GET:http://localhost:8000/tasks/counts', counts, 5000);
       }
     } catch (err) {
       // Silently fail
     }
-  };
+  }, 300);
 
   // Fetch task counts on mount
   useEffect(() => {

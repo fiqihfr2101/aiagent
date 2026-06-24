@@ -7,3 +7,4 @@ temporalio
 git+https://github.com/NousResearch/hermes-agent.git
 python-dotenv
 httpx
+redis

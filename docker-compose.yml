@@ -7,9 +7,11 @@ services:
       - ./backend/data:/app/data
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
+      - REDIS_URL=redis://redis:6379/0
     restart: always
     depends_on:
       - temporal
+      - redis
 
   worker:
     build: ./backend
@@ -33,6 +35,17 @@ services:
     environment:
       - NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+    restart: always
+
+  # Redis Cache
+  redis:
+    container_name: hermes-redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     restart: always
 
   # Temporal Cluster
@@ -60,3 +73,6 @@ services:
       - POSTGRES_DB=temporal
     ports:
       - "5432:5432"
+
+volumes:
+  redis_data:
