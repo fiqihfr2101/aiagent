@@ -23,6 +23,12 @@ from app.infrastructure.notification_service import NotificationService
 from app.infrastructure.cache_service import cache
 from app.infrastructure.ws_manager import ws_manager, CHANNELS
 from workflows.agent_workflow import AgentTaskWorkflow
+from app.infrastructure.auth_service import (
+    LoginRequest, RefreshRequest, LogoutRequest,
+    authenticate_user, create_token_pair, validate_token,
+    revoke_token, revoke_all_user_tokens, register_user,
+)
+from app.infrastructure.rate_limiter import rate_limiter
 
 # Load environment variables
 load_dotenv()
@@ -66,14 +72,54 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 
-# Enable CORS for Next.js frontend
+# ─── CORS Hardening ───────────────────────────────────────────────
+# Restrict origins to specific frontend URL
+_allowed_origins = os.getenv(
+    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Accept"],
 )
+
+# ─── Security Headers Middleware ──────────────────────────────────
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https:; img-src 'self' data: blob:;"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    return response
+
+# ─── Rate Limiting Middleware ─────────────────────────────────────
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Apply rate limiting to all requests."""
+    # Skip rate limiting for health check and WebSocket upgrades
+    if request.url.path == "/health" or request.headers.get("upgrade", "").lower() == "websocket":
+        return await call_next(request)
+
+    rate_info = rate_limiter.check_rate_limit(request)
+    response = await call_next(request)
+
+    # Add rate limit headers to response
+    if rate_info:
+        for key, value in rate_info.items():
+            response.headers[key] = value
+
+    return response
+
+# ─── Request Size Limit ──────────────────────────────────────────
+MAX_REQUEST_SIZE = int(os.getenv("MAX_REQUEST_SIZE", str(10 * 1024 * 1024)))  # 10MB default
 
 # ─── Request ID Middleware ────────────────────────────────────────
 @app.middleware("http")
@@ -190,6 +236,63 @@ class NotificationRead(BaseModel):
 @app.get("/health")
 async def health():
     return {"status": "ok", "temporal": temporal_client is not None}
+
+# ─── Auth Endpoints ───────────────────────────────────────────────
+
+@app.post("/auth/login")
+async def auth_login(request: Request, login_data: LoginRequest):
+    """Authenticate user and return JWT tokens."""
+    user = authenticate_user(login_data.username, login_data.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    tokens = create_token_pair(user)
+    logger.info("User logged in: %s", user["username"])
+    return tokens
+
+
+@app.post("/auth/refresh")
+async def auth_refresh(request: Request, refresh_data: RefreshRequest):
+    """Refresh an access token using a valid refresh token."""
+    payload = validate_token(refresh_data.refresh_token, token_type="refresh")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    # Revoke old refresh token (rotation)
+    revoke_token(refresh_data.refresh_token)
+
+    user_data = {"username": payload["sub"], "role": payload.get("role", "user")}
+    tokens = create_token_pair(user_data)
+    return tokens
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request, logout_data: LogoutRequest):
+    """Logout user and revoke tokens."""
+    # Get user from Authorization header if present
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        access_token = auth_header[7:]
+        revoke_token(access_token)
+
+    if logout_data.refresh_token:
+        revoke_token(logout_data.refresh_token)
+
+    return {"status": "ok", "message": "Logged out successfully"}
+
+
+@app.get("/auth/me")
+async def auth_me(request: Request):
+    """Get current authenticated user info."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = validate_token(auth_header[7:], token_type="access")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    return {"username": payload["sub"], "role": payload.get("role", "user")}
 
 @app.post("/log")
 async def receive_log(request: Request):

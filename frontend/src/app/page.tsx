@@ -7,6 +7,7 @@ import AgentCard from '@/components/AgentCard';
 import NotificationBell from '@/components/NotificationBell';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { Agent, LogEntry, TaskLog } from '@/types';
+import { ProtectedRoute } from '@/contexts/AuthContext';
 
 // Dynamic imports for heavy components (code splitting)
 const NodeGraph = lazy(() => import('@/components/NodeGraph'));
@@ -199,6 +200,7 @@ export default function MissionControl() {
   );
 
   return (
+    <ProtectedRoute>
     <div className="shell dotgrid flex flex-col h-screen overflow-hidden bg-bg text-txt font-sans selection:bg-cyan-custom/30">
 
       {/* Toast Notification */}
@@ -548,5 +550,6 @@ export default function MissionControl() {
         </>
       )}
     </div>
+    </ProtectedRoute>
   );
 }
