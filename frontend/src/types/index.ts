@@ -1,10 +1,10 @@
-
 export type AgentStatus = 'active' | 'sleeping' | 'offline';
 
 export interface Agent {
   id: string;
   name: string;
   role: string;
+  model?: string;
   status: AgentStatus;
   task: string;
   seen: string;

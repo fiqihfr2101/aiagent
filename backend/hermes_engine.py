@@ -5,41 +5,76 @@ import datetime
 from typing import Optional
 
 from app.infrastructure.metrics_collector import MetricsCollector
+from app.infrastructure.agent_repository import AgentRepository
 
 
 class HermesEngine:
     def __init__(self, broadcast_callback, metrics_collector: Optional[MetricsCollector] = None):
         self.broadcast_callback = broadcast_callback
         self.metrics = metrics_collector or MetricsCollector()
-        self.agents = [
-            {"id": "jarvis", "name": "JARVIS", "role": "Squad Lead", "status": "active", "task": "Coordinating agent fleet tasks", "seen": "just now", "uptime": "99.8%", "hb": "2s", "color": "#00D4AA"},
-            {"id": "architect", "name": "ARCHITECT", "role": "Strategist", "status": "active", "task": "Architect fleet check started", "seen": "just now", "uptime": "99.4%", "hb": "3s", "color": "#6366F1"},
-        ]
+        self.repo = AgentRepository()
+        self.agents = []
         self.tasks = []
         self.logs = []
 
+    async def initialize(self):
+        """Load agents from DB, seed defaults if empty."""
+        existing = self.repo.get_all()
+        if existing:
+            self.agents = existing
+        else:
+            # Seed default agents
+            self.repo.create("JARVIS", "Squad Lead", "claude-sonnet-4", "active", "#00D4AA")
+            self.repo.create("ARCHITECT", "Strategist", "gpt-4o", "active", "#6366F1")
+            self.agents = self.repo.get_all()
+
     async def register_agent(self, name, role, model):
-        """Simulate Hermes agent spawning."""
-        agent_id = name.lower().replace(" ", "_")
-        new_agent = {
-            "id": agent_id,
-            "name": name.upper(),
-            "role": role,
-            "status": "active",
-            "task": f"Initializing with model {model}...",
-            "seen": "just now",
-            "uptime": "100%",
-            "hb": "1s",
-            "color": "#00D4AA"
-        }
-        self.agents.append(new_agent)
+        """Register a new agent with persistence."""
+        agent = self.repo.create(name.upper(), role, model)
+        # Enrich with display fields
+        agent["seen"] = "just now"
+        agent["uptime"] = "100%"
+        agent["hb"] = "1s"
+        self.agents = self.repo.get_all()
 
-        # Register with metrics collector
-        await self.metrics.register_agent(agent_id, name.upper())
-
+        await self.metrics.register_agent(agent["id"], agent["name"])
         await self.log("SYSTEM", "INFO", f"Registered new agent: {name.upper()} ({role})")
         await self.sync_fleet()
-        return new_agent
+        return agent
+
+    async def update_agent(self, agent_id: str, **kwargs):
+        """Update agent config in DB and sync."""
+        agent = self.repo.update(agent_id, **kwargs)
+        if agent:
+            self.agents = self.repo.get_all()
+            await self.log("SYSTEM", "INFO", f"Updated agent: {agent['name']}")
+            await self.sync_fleet()
+        return agent
+
+    async def update_agent_model(self, agent_id: str, model: str):
+        """Update agent's model."""
+        return await self.update_agent(agent_id, model=model)
+
+    async def delete_agent(self, agent_id: str) -> bool:
+        """Delete agent from DB and sync."""
+        agent = self.repo.get_by_id(agent_id)
+        if not agent:
+            return False
+        name = agent["name"]
+        self.repo.delete(agent_id)
+        self.agents = self.repo.get_all()
+        await self.log("SYSTEM", "INFO", f"Removed agent: {name}")
+        await self.sync_fleet()
+        return True
+
+    def get_agents(self):
+        """Return current agents from DB."""
+        self.agents = self.repo.get_all()
+        return self.agents
+
+    def get_agent(self, agent_id: str):
+        """Get single agent by ID."""
+        return self.repo.get_by_id(agent_id)
 
     async def log(self, agent_name, level, message):
         ts = datetime.datetime.now().strftime("%H:%M:%S")
@@ -64,7 +99,6 @@ class HermesEngine:
                 import random
                 agent = random.choice(self.agents)
                 await self.log(agent["name"], "INFO", f"Processing heartbeat for node {agent['id']}")
-                # Update metrics last-seen
                 await self.metrics.update_agent_seen(agent["id"])
 
     async def submit_task(self, agent_id: str, title: str, priority: str = "medium"):

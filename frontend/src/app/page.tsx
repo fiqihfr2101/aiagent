@@ -8,6 +8,8 @@ import NodeGraph from '@/components/NodeGraph';
 import Console from '@/components/Console';
 import MemoryView from '@/components/MemoryView';
 import AnalyticsView from '@/components/AnalyticsView';
+import AddAgentModal from '@/components/AddAgentModal';
+import EditAgentModal from '@/components/EditAgentModal';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { Agent, LogEntry } from '@/types';
 
@@ -20,6 +22,9 @@ export default function MissionControl() {
   const [taskTitle, setTaskTitle] = useState('');
   const [taskPriority, setTaskPriority] = useState('p1');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
 
   const { agents, logs, systemOnline, stats } = useWebSocket('ws://localhost:8000/ws');
 
@@ -27,6 +32,29 @@ export default function MissionControl() {
     setSelectedAgentId(id);
     setIsDrawerOpen(true);
     setDrawerTab('overview');
+  };
+
+  const handleEditAgent = (agent: Agent) => {
+    setEditingAgent(agent);
+    setIsEditModalOpen(true);
+  };
+
+  const handleDeleteAgent = async (id: string) => {
+    if (!confirm('Remove this agent from the fleet?')) return;
+    try {
+      const res = await fetch(`http://localhost:8000/agents/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete agent');
+    } catch (err) {
+      console.error('Failed to delete agent:', err);
+    }
+  };
+
+  const handleAgentAdded = (agent: any) => {
+    // WebSocket will auto-update via fleet_update
+  };
+
+  const handleAgentUpdated = (agent: any) => {
+    // WebSocket will auto-update via fleet_update
   };
 
   const handleDispatchTask = async () => {
@@ -88,7 +116,6 @@ export default function MissionControl() {
             {/* HERO */}
             <div className="flex-shrink-0 p-[26px_28px_22px] bg-linear-to-b from-[rgba(0,30,50,0.4)] to-transparent border-b border-border-custom flex items-center gap-7">
               <div className="flex-shrink-0 w-[190px] h-[190px] flex items-center justify-center">
-                 {/* Simplified Orbital for now or port the full SVG from HTML */}
                  <div className="w-32 h-32 rounded-full border-2 border-cyan-custom/20 flex items-center justify-center animate-pulse">
                     <div className="w-24 h-24 rounded-full border border-cyan-custom/40 animate-spin" style={{animationDuration: '10s'}}></div>
                     <div className="absolute w-12 h-12 rounded-full bg-cyan-custom/10 blur-xl"></div>
@@ -116,10 +143,22 @@ export default function MissionControl() {
               <div className="text-[9px] text-txt3 tracking-[0.18em] uppercase mb-3 flex items-center gap-2">
                 Agent fleet · live status
                 <div className="flex-1 h-px bg-border-custom"></div>
+                <button
+                  onClick={() => setIsAddModalOpen(true)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-[6px] text-[9px] font-bold font-mono bg-cyan-custom/15 border border-cyan-custom/30 text-cyan-custom hover:bg-cyan-custom/25 transition-colors tracking-[0.06em]"
+                >
+                  <span className="text-[11px]">+</span> ADD AGENT
+                </button>
               </div>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-2.5">
                 {agents.map(agent => (
-                  <AgentCard key={agent.id} agent={agent} onClick={() => handleOpenDrawer(agent.id)} />
+                  <AgentCard 
+                    key={agent.id} 
+                    agent={agent} 
+                    onClick={() => handleOpenDrawer(agent.id)}
+                    onEdit={handleEditAgent}
+                    onDelete={handleDeleteAgent}
+                  />
                 ))}
               </div>
             </div>
@@ -144,6 +183,21 @@ export default function MissionControl() {
 
       </main>
 
+      {/* ADD AGENT MODAL */}
+      <AddAgentModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        onAgentAdded={handleAgentAdded}
+      />
+
+      {/* EDIT AGENT MODAL */}
+      <EditAgentModal
+        isOpen={isEditModalOpen}
+        agent={editingAgent}
+        onClose={() => { setIsEditModalOpen(false); setEditingAgent(null); }}
+        onAgentUpdated={handleAgentUpdated}
+      />
+
       {/* DRAWER & OVERLAY */}
       {isDrawerOpen && activeAgent && (
         <>
@@ -164,9 +218,16 @@ export default function MissionControl() {
                   <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-6 h-6 stroke-current"><path d="M18 6L6 18M6 6l12 12"/></svg>
                 </div>
               </div>
-              <span className={`badge ${activeAgent.status} px-2 py-[2px] rounded-full text-[8px] font-bold font-mono border`}>
-                {activeAgent.status.toUpperCase()}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`badge ${activeAgent.status} px-2 py-[2px] rounded-full text-[8px] font-bold font-mono border`}>
+                  {activeAgent.status.toUpperCase()}
+                </span>
+                {activeAgent.model && (
+                  <span className="px-2 py-[2px] rounded-full text-[8px] font-bold font-mono border border-border-custom bg-[rgba(255,255,255,0.03)] text-purple-400">
+                    {activeAgent.model}
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="drtabs">

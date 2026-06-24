@@ -5,10 +5,12 @@ import { Agent } from '../types';
 interface AgentCardProps {
   agent: Agent;
   onClick: (id: string) => void;
+  onEdit: (agent: Agent) => void;
+  onDelete: (id: string) => void;
   taskCount?: number;
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, taskCount = 0 }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, onEdit, onDelete, taskCount = 0 }) => {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return 'var(--cyan)';
@@ -20,6 +22,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, taskCount = 0 }) 
   const getHbClass = (hb: string) => {
     if (hb.includes('m')) return 'text-red-custom';
     return parseInt(hb) > 30 ? 'text-amb-custom' : 'text-cyan-custom';
+  };
+
+  const getModelColor = (model?: string) => {
+    if (!model) return 'text-txt3';
+    if (model.includes('claude')) return 'text-purple-400';
+    if (model.includes('gpt')) return 'text-green-400';
+    if (model.includes('kimi')) return 'text-blue-400';
+    return 'text-txt3';
   };
 
   const stColor = getStatusColor(agent.status);
@@ -39,9 +49,16 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, taskCount = 0 }) 
           <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-[13px] font-mono flex-shrink-0 bg-[rgba(0,212,170,0.15)] text-cyan-custom border border-[rgba(0,212,170,0.3)]">
             {agent.name[0]}
           </div>
-          <div className="flex items-center gap-1 text-[8px] font-semibold font-mono tracking-[0.06em]" style={{ color: stColor }}>
-            <span className={`w-1 h-1 rounded-full inline-block ${agent.status === 'active' ? 'animate-pulse' : ''}`} style={{ background: stColor, boxShadow: agent.status === 'active' ? `0 0 5px ${stColor}` : 'none' }}></span>
-            {agent.status.toUpperCase()}
+          <div className="flex items-center gap-2">
+            {agent.model && (
+              <span className={`text-[7px] font-mono font-semibold px-1.5 py-[1px] rounded-[4px] border border-border-custom/50 bg-[rgba(255,255,255,0.03)] ${getModelColor(agent.model)}`}>
+                {agent.model}
+              </span>
+            )}
+            <div className="flex items-center gap-1 text-[8px] font-semibold font-mono tracking-[0.06em]" style={{ color: stColor }}>
+              <span className={`w-1 h-1 rounded-full inline-block ${agent.status === 'active' ? 'animate-pulse' : ''}`} style={{ background: stColor, boxShadow: agent.status === 'active' ? `0 0 5px ${stColor}` : 'none' }}></span>
+              {agent.status.toUpperCase()}
+            </div>
           </div>
         </div>
         <div className="font-bold text-sm tracking-[0.05em] leading-none">
@@ -65,8 +82,24 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, taskCount = 0 }) 
             <span className="text-[11px] font-semibold text-cyan-custom font-mono">{taskCount}</span>
           </div>
         </div>
-        <div className="text-[8px] text-txt3 mt-[7px] font-mono flex items-center justify-between">
-          <span>last seen {agent.seen}</span>
+        <div className="flex items-center justify-between mt-[7px]">
+          <span className="text-[8px] text-txt3 font-mono">last seen {agent.seen}</span>
+          <div className="flex items-center gap-1">
+            <button
+              className="w-5 h-5 rounded flex items-center justify-center text-txt3 hover:text-cyan-custom hover:bg-[rgba(0,212,170,0.1)] transition-all text-[9px]"
+              onClick={(e) => { e.stopPropagation(); onEdit(agent); }}
+              title="Edit agent"
+            >
+              ✎
+            </button>
+            <button
+              className="w-5 h-5 rounded flex items-center justify-center text-txt3 hover:text-red-custom hover:bg-[rgba(255,80,80,0.1)] transition-all text-[9px]"
+              onClick={(e) => { e.stopPropagation(); onDelete(agent.id); }}
+              title="Delete agent"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       </div>
     </div>
