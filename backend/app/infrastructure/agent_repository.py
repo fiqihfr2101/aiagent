@@ -1,9 +1,12 @@
 import sqlite3
 import uuid
 import datetime
+import logging
 from typing import Optional, List, Dict, Any
 
 from .db_pool import get_pool
+
+logger = logging.getLogger(__name__)
 
 # Valid models that can be assigned to agents
 VALID_MODELS = {
@@ -47,12 +50,14 @@ class AgentRepository:
     def create(self, name: str, role: str, model: str = "claude-sonnet-4", status: str = "active", color: str = "#00D4AA") -> Dict[str, Any]:
         agent_id = name.lower().replace(" ", "_") + "_" + uuid.uuid4().hex[:6]
         now = datetime.datetime.now().isoformat()
+        logger.info("SQL QUERY: INSERT INTO agents (name=%s, role=%s, model=%s)", name, role, model)
         with self._pool.connection() as conn:
             conn.execute(
                 "INSERT INTO agents (id, name, role, model, status, task, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (agent_id, name, role, model, status, f"Initializing with model {model}...", color, now, now)
             )
             conn.commit()
+            logger.info("SQL RESULT: agent created id=%s", agent_id)
             return self._row_to_dict(conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone())
 
     def get_all(self) -> List[Dict[str, Any]]:
@@ -78,20 +83,25 @@ class AgentRepository:
         updates["updated_at"] = datetime.datetime.now().isoformat()
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [agent_id]
+        logger.info("SQL QUERY: UPDATE agents SET %s WHERE id=%s", set_clause, agent_id)
 
         with self._pool.connection() as conn:
             conn.execute(f"UPDATE agents SET {set_clause} WHERE id = ?", values)
             conn.commit()
+            logger.info("SQL RESULT: agent updated id=%s fields=%s", agent_id, list(updates.keys()))
             return self.get_by_id(agent_id)
 
     def update_model(self, agent_id: str, model: str) -> Optional[Dict[str, Any]]:
         return self.update(agent_id, model=model)
 
     def delete(self, agent_id: str) -> bool:
+        logger.info("SQL QUERY: DELETE FROM agents WHERE id=%s", agent_id)
         with self._pool.connection() as conn:
             cursor = conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
             conn.commit()
-            return cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+            logger.info("SQL RESULT: agent delete id=%s success=%s", agent_id, deleted)
+            return deleted
 
     def _row_to_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         d = dict(row)

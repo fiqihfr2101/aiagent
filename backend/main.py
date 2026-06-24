@@ -1,6 +1,5 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from typing import Optional, List
 from temporalio.client import Client
 import uvicorn
@@ -29,6 +28,39 @@ from app.infrastructure.auth_service import (
     revoke_token, revoke_all_user_tokens, register_user,
 )
 from app.infrastructure.rate_limiter import rate_limiter
+from app.interfaces.schemas import (
+    AgentCreate, AgentUpdate, AgentModelUpdate,
+    TaskCreate, TaskUpdate, TaskSubmit,
+    LoginRequest as SchemaLoginRequest, RefreshRequest as SchemaRefreshRequest,
+    NotificationCreate, NotificationRead,
+    LogCreate as SchemaLogCreate, LogReceive, RegisterRaw,
+    MetricsCollect, ModelRateUpdate,
+    sanitize_plain, sanitize_text,
+)
+
+# ─── Input Sanitization Helpers ─────────────────────────────────
+def _sanitize_string(value: str) -> str:
+    """Strip null bytes and control characters from string input."""
+    if not isinstance(value, str):
+        return value
+    value = value.replace('\x00', '')
+    value = __import__('re').sub(r'[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]', '', value)
+    return value.strip()
+
+def _sanitize_dict(d: dict) -> dict:
+    """Recursively sanitize all string values in a dict."""
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, str):
+            out[k] = _sanitize_string(v)
+        elif isinstance(v, dict):
+            out[k] = _sanitize_dict(v)
+        elif isinstance(v, list):
+            out[k] = [_sanitize_string(i) if isinstance(i, str) else i for i in v]
+        else:
+            out[k] = v
+    return out
+
 
 # Load environment variables
 load_dotenv()
@@ -90,6 +122,13 @@ app.add_middleware(
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     """Add security headers to all responses."""
+    # Validate Content-Type for POST/PUT requests
+    if request.method in ("POST", "PUT", "PATCH"):
+        content_type = request.headers.get("content-type", "")
+        if content_type and not content_type.startswith(("application/json", "multipart/form-data", "application/x-www-form-urlencoded")):
+            logger.warning("Rejected request with invalid Content-Type: %s [path=%s]", content_type, request.url.path)
+            raise HTTPException(status_code=415, detail="Unsupported Media Type. Use application/json.")
+
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -98,6 +137,10 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https:; img-src 'self' data: blob:;"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # Ensure JSON responses use correct Content-Type
+    if request.url.path.startswith("/api/") or request.url.path.startswith("/auth/") or request.url.path.startswith("/agents") or request.url.path.startswith("/tasks") or request.url.path.startswith("/metrics") or request.url.path.startswith("/notifications"):
+        if "content-type" not in response.headers:
+            response.headers["Content-Type"] = "application/json; charset=utf-8"
     return response
 
 # ─── Rate Limiting Middleware ─────────────────────────────────────
@@ -119,7 +162,28 @@ async def rate_limit_middleware(request: Request, call_next):
     return response
 
 # ─── Request Size Limit ──────────────────────────────────────────
-MAX_REQUEST_SIZE = int(os.getenv("MAX_REQUEST_SIZE", str(10 * 1024 * 1024)))  # 10MB default
+MAX_REQUEST_SIZE = int(os.getenv("MAX_REQUEST_SIZE", str(10 * 1024)))  # 10KB default for input validation
+
+@app.middleware("http")
+async def request_size_limit_middleware(request: Request, call_next):
+    """Enforce maximum request body size (default 10KB)."""
+    # Skip for GET, DELETE, OPTIONS, WebSocket, and health checks
+    if request.method in ("GET", "DELETE", "OPTIONS", "HEAD"):
+        return await call_next(request)
+    if request.url.path == "/health" or request.headers.get("upgrade", "").lower() == "websocket":
+        return await call_next(request)
+
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_REQUEST_SIZE:
+        logger.warning(
+            "Request body too large: %s bytes (max %s) [path=%s]",
+            content_length, MAX_REQUEST_SIZE, request.url.path,
+        )
+        raise HTTPException(
+            status_code=413,
+            detail=f"Request body too large. Maximum size is {MAX_REQUEST_SIZE} bytes.",
+        )
+    return await call_next(request)
 
 # ─── Request ID Middleware ────────────────────────────────────────
 @app.middleware("http")
@@ -202,35 +266,6 @@ async def _emit_notification(
         await notification_svc.send_telegram(telegram_msg)
 
 
-# ─── Pydantic Models ─────────────────────────────────────────────
-
-class AgentCreate(BaseModel):
-    name: str
-    role: str
-    model: str = "claude-sonnet-4"
-
-class AgentUpdate(BaseModel):
-    name: Optional[str] = None
-    role: Optional[str] = None
-    model: Optional[str] = None
-    status: Optional[str] = None
-
-class ModelUpdate(BaseModel):
-    model: str
-
-class TaskCreate(BaseModel):
-    agent_id: str
-    title: str
-    priority: str = "P2"
-
-class TaskStatusUpdate(BaseModel):
-    status: str
-    result: Optional[str] = None
-    tokens_used: Optional[int] = None
-
-class NotificationRead(BaseModel):
-    id: str
-
 
 
 @app.get("/health")
@@ -240,10 +275,13 @@ async def health():
 # ─── Auth Endpoints ───────────────────────────────────────────────
 
 @app.post("/auth/login")
-async def auth_login(request: Request, login_data: LoginRequest):
+async def auth_login(request: Request, login_data: SchemaLoginRequest):
     """Authenticate user and return JWT tokens."""
+    # Log sanitized username for audit trail (never log password)
+    logger.info("Login attempt for user: %s [ip=%s]", login_data.username, request.client.host if request.client else "unknown")
     user = authenticate_user(login_data.username, login_data.password)
     if not user:
+        logger.warning("Failed login attempt for user: %s", login_data.username)
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     tokens = create_token_pair(user)
@@ -252,7 +290,7 @@ async def auth_login(request: Request, login_data: LoginRequest):
 
 
 @app.post("/auth/refresh")
-async def auth_refresh(request: Request, refresh_data: RefreshRequest):
+async def auth_refresh(request: Request, refresh_data: SchemaRefreshRequest):
     """Refresh an access token using a valid refresh token."""
     payload = validate_token(refresh_data.refresh_token, token_type="refresh")
     if not payload:
@@ -295,31 +333,31 @@ async def auth_me(request: Request):
     return {"username": payload["sub"], "role": payload.get("role", "user")}
 
 @app.post("/log")
-async def receive_log(request: Request):
-    data = await request.json()
-    await hermes.log(data.get("agent_name", "SYSTEM"), data.get("level", "INFO"), data.get("message", ""))
+async def receive_log(data: LogReceive):
+    """Receive a log entry with validation."""
+    await hermes.log(data.agent_name, data.level, data.message)
     return {"status": "ok"}
 
 @app.post("/register")
-async def register(request: Request):
-    data = await request.json()
-    agent = await hermes.register_agent(data["name"], data["role"], data["model"])
+async def register(data: RegisterRaw):
+    """Register a new agent with validation."""
+    agent = await hermes.register_agent(data.name, data.role, data.model)
     return agent
 
 @app.post("/task")
-async def submit_task(request: Request):
-    data = await request.json()
+async def submit_task(data: TaskSubmit):
+    """Submit a task to Temporal workflow with validation."""
     if not temporal_client:
         return {"error": "Temporal client not connected"}, 500
 
     handle = await temporal_client.start_workflow(
         AgentTaskWorkflow.run,
-        data,
-        id=f"task-{data.get('agent_id')}-{os.urandom(4).hex()}",
+        data.model_dump(),
+        id=f"task-{data.agent_id}-{os.urandom(4).hex()}",
         task_queue="hermes-task-queue",
     )
 
-    await hermes.log("SYSTEM", "INFO", f"Triggered workflow for task: {data.get('title')}")
+    await hermes.log("SYSTEM", "INFO", f"Triggered workflow for task: {data.title}")
     return {"workflow_id": handle.id}
 
 @app.get("/memories/{agent_id}")
@@ -422,7 +460,7 @@ async def delete_agent(agent_id: str):
     return {"status": "deleted", "id": agent_id}
 
 @app.put("/agents/{agent_id}/model")
-async def update_agent_model(agent_id: str, data: ModelUpdate):
+async def update_agent_model(agent_id: str, data: AgentModelUpdate):
     """Update agent's model."""
     agent = hermes.get_agent(agent_id)
     if not agent:
@@ -676,7 +714,7 @@ async def list_tasks(
 
 
 @app.post("/tasks/{task_id}/status")
-async def update_task_status(task_id: str, data: TaskStatusUpdate):
+async def update_task_status(task_id: str, data: TaskUpdate):
     """Internal endpoint to update task status (called by Temporal activities)."""
     task = task_repo.get_by_id(task_id)
     if not task:
@@ -695,12 +733,6 @@ async def update_task_status(task_id: str, data: TaskStatusUpdate):
 
 
 # ─── Log Endpoints ───────────────────────────────────────────────
-
-class LogCreate(BaseModel):
-    message: str
-    level: str = "INFO"
-    task_id: Optional[str] = None
-    agent_id: Optional[str] = None
 
 @app.get("/tasks/{task_id}/logs")
 async def get_task_logs(task_id: str, limit: int = Query(100, ge=1, le=500)):
@@ -724,7 +756,7 @@ async def get_all_logs(
     )
 
 @app.post("/logs")
-async def create_log(data: LogCreate, request: Request):
+async def create_log(data: SchemaLogCreate, request: Request):
     """Add a log entry."""
     request_id = getattr(request.state, "request_id", None)
     entry = log_repo.create(
@@ -775,10 +807,9 @@ async def get_system_metrics():
     return result
 
 @app.post("/metrics/collect")
-async def collect_metrics(request: Request):
-    """Receive metrics from external agents."""
-    data = await request.json()
-    result = await metrics_collector.ingest_external_metrics(data)
+async def collect_metrics(data: MetricsCollect):
+    """Receive metrics from external agents with validation."""
+    result = await metrics_collector.ingest_external_metrics(data.model_dump())
     return result
 
 
@@ -825,11 +856,10 @@ async def get_model_rates():
     return await metrics_collector.get_model_rates()
 
 @app.put("/metrics/costs/rates/{model}")
-async def update_model_rate(model: str, request: Request):
-    """Update token rates for a model."""
-    data = await request.json()
+async def update_model_rate(model: str, data: ModelRateUpdate):
+    """Update token rates for a model with validation."""
     return await metrics_collector.update_model_rate(
-        model, data.get("input", 0.003), data.get("output", 0.015)
+        model, data.input, data.output
     )
 
 # ─── Notification Endpoints ───────────────────────────────────────
