@@ -15,7 +15,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeL2, setActiveL2, stats }) => {
     { id: 'graph', label: 'Node Graph', icon: (
       <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="12" r="3"/><circle cx="6" cy="18" r="3"/><path d="M9 6h6a3 3 0 0 1 3 3M9 18h3"/></svg>
     )},
-    { id: 'taskboard', label: 'Task Board', icon: (
+    { id: 'tasks', label: 'Task History', icon: (
       <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
     )},
     { id: 'console', label: 'Console', icon: (

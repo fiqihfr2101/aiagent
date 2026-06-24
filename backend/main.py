@@ -1,7 +1,7 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from temporalio.client import Client
 import uvicorn
 import json
@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from hermes_engine import HermesEngine
 from app.infrastructure.memory_manager import MemoryManager
 from app.infrastructure.metrics_collector import MetricsCollector
+from app.infrastructure.task_repository import TaskRepository
 from workflows.agent_workflow import AgentTaskWorkflow
 
 # Load environment variables
@@ -52,6 +53,7 @@ manager = ConnectionManager()
 metrics_collector = MetricsCollector()
 hermes = HermesEngine(manager.broadcast, metrics_collector)
 memory = MemoryManager()
+task_repo = TaskRepository()
 temporal_client = None
 
 
@@ -70,6 +72,16 @@ class AgentUpdate(BaseModel):
 
 class ModelUpdate(BaseModel):
     model: str
+
+class TaskCreate(BaseModel):
+    agent_id: str
+    title: str
+    priority: str = "P2"
+
+class TaskStatusUpdate(BaseModel):
+    status: str
+    result: Optional[str] = None
+    tokens_used: Optional[int] = None
 
 
 @app.on_event("startup")
@@ -186,6 +198,159 @@ async def update_agent_model(agent_id: str, data: ModelUpdate):
     return updated
 
 
+# ─── Task Dispatch Endpoints ──────────────────────────────────────
+
+@app.post("/tasks")
+async def dispatch_task(task_data: TaskCreate):
+    """Dispatch a new task to an agent."""
+    # Verify agent exists
+    agent = hermes.get_agent(task_data.agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Create task in DB
+    workflow_id = None
+    task = task_repo.create(task_data.agent_id, task_data.title, task_data.priority)
+
+    # Try to start Temporal workflow
+    if temporal_client:
+        try:
+            wf_id = f"task-{task_data.agent_id}-{os.urandom(4).hex()}"
+            wf_data = {
+                "agent_id": task_data.agent_id,
+                "title": task_data.title,
+                "priority": task_data.priority,
+                "task_id": task["id"],
+            }
+            handle = await temporal_client.start_workflow(
+                AgentTaskWorkflow.run,
+                wf_data,
+                id=wf_id,
+                task_queue="hermes-task-queue",
+            )
+            workflow_id = handle.id
+            task_repo.update_status(task["id"], "RUNNING")
+            task["status"] = "RUNNING"
+            task["workflow_id"] = workflow_id
+        except Exception as e:
+            print(f"Temporal workflow start failed: {e}")
+            # Task remains QUEUED - can be retried
+    else:
+        # No Temporal - simulate task execution
+        task_repo.update_status(task["id"], "RUNNING")
+        task["status"] = "RUNNING"
+        asyncio.create_task(_simulate_task(task["id"], task_data.agent_id, task_data.title))
+
+    await hermes.log("SYSTEM", "INFO", f"Task dispatched: {task_data.title} → {agent['name']}")
+    
+    # Broadcast task update via WebSocket
+    await manager.broadcast(json.dumps({
+        "type": "task_update",
+        "task": task,
+    }))
+
+    return task
+
+
+async def _simulate_task(task_id: str, agent_id: str, title: str):
+    """Simulate task execution when Temporal is not available."""
+    import random
+    await asyncio.sleep(random.randint(3, 10))
+    tokens = random.randint(100, 5000)
+    result = json.dumps({"output": f"Simulated completion of: {title}"})
+    task_repo.update_status(task_id, "COMPLETED", result=result, tokens_used=tokens)
+    
+    task = task_repo.get_by_id(task_id)
+    await hermes.log("SYSTEM", "INFO", f"Task completed: {title}")
+    await manager.broadcast(json.dumps({
+        "type": "task_update",
+        "task": task,
+    }))
+
+
+@app.get("/tasks/history")
+async def get_task_history(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    agent_id: Optional[str] = None,
+    status: Optional[str] = None,
+):
+    """Get paginated task history."""
+    return task_repo.get_history(page=page, page_size=page_size, agent_id=agent_id, status=status)
+
+
+@app.get("/tasks/{task_id}")
+async def get_task(task_id: str):
+    """Get task detail by ID."""
+    task = task_repo.get_by_id(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+@app.post("/tasks/{task_id}/stop")
+async def stop_task(task_id: str):
+    """Stop a running or queued task."""
+    task = task_repo.get_by_id(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task["status"] not in ("QUEUED", "RUNNING"):
+        raise HTTPException(status_code=400, detail=f"Cannot stop task with status: {task['status']}")
+
+    # Try to signal Temporal workflow to cancel
+    if temporal_client and task.get("workflow_id"):
+        try:
+            handle = temporal_client.get_workflow_handle(task["workflow_id"])
+            await handle.signal(AgentTaskWorkflow.cancel_task)
+        except Exception as e:
+            print(f"Failed to signal Temporal workflow: {e}")
+
+    task_repo.update_status(task_id, "STOPPED")
+    updated_task = task_repo.get_by_id(task_id)
+
+    await hermes.log("SYSTEM", "INFO", f"Task stopped: {task['title']}")
+    await manager.broadcast(json.dumps({
+        "type": "task_update",
+        "task": updated_task,
+    }))
+
+    return updated_task
+
+
+@app.get("/tasks")
+async def list_tasks(
+    agent_id: Optional[str] = None,
+    status: Optional[str] = None,
+):
+    """List tasks with optional filters."""
+    return task_repo.get_all(agent_id=agent_id, status=status)
+
+
+@app.post("/tasks/{task_id}/status")
+async def update_task_status(task_id: str, data: TaskStatusUpdate):
+    """Internal endpoint to update task status (called by Temporal activities)."""
+    task = task_repo.get_by_id(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task_repo.update_status(task_id, data.status, result=data.result, tokens_used=data.tokens_used)
+    updated_task = task_repo.get_by_id(task_id)
+
+    # Broadcast task update
+    await manager.broadcast(json.dumps({
+        "type": "task_update",
+        "task": updated_task,
+    }))
+
+    return updated_task
+
+
+@app.get("/tasks/counts")
+async def get_task_counts():
+    """Get active task counts per agent."""
+    return task_repo.get_all_active_task_counts()
+
+
 # ─── Metrics Endpoints ────────────────────────────────────────────
 
 @app.get("/metrics")
@@ -216,6 +381,15 @@ async def collect_metrics(request: Request):
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     await hermes.sync_fleet()
+    # Send current task counts on connect
+    try:
+        counts = task_repo.get_all_active_task_counts()
+        await websocket.send_text(json.dumps({
+            "type": "task_counts",
+            "counts": counts,
+        }))
+    except Exception:
+        pass
     try:
         while True:
             await websocket.receive_text()
@@ -250,9 +424,17 @@ async def metrics_broadcast_loop():
                     await metrics_collector.register_agent(agent["id"], agent["name"])
 
             all_metrics = await metrics_collector.get_all_metrics()
+            
+            # Also broadcast task counts
+            counts = task_repo.get_all_active_task_counts()
+            
             await manager.broadcast(json.dumps({
                 "type": "metrics",
                 "data": all_metrics,
+            }))
+            await manager.broadcast(json.dumps({
+                "type": "task_counts",
+                "counts": counts,
             }))
         except Exception as e:
             print(f"Metrics broadcast error: {e}")

@@ -1,12 +1,14 @@
 
 import { useEffect, useRef, useState } from 'react';
-import { Agent, FeedItem, LogEntry } from '../types';
+import { Agent, FeedItem, LogEntry, TaskCounts } from '../types';
 
 export const useWebSocket = (url: string) => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [systemOnline, setSystemOnline] = useState(false);
   const [stats, setStats] = useState({ active_nodes: 0, running: 0, sleeping: 0, offline: 0 });
+  const [taskCounts, setTaskCounts] = useState<TaskCounts>({});
+  const [lastTaskUpdate, setLastTaskUpdate] = useState<any>(null);
   
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -33,6 +35,12 @@ export const useWebSocket = (url: string) => {
           setAgents(data.agents);
         } else if (data.type === 'log') {
           setLogs(prev => [data.data, ...prev].slice(0, 100));
+        } else if (data.type === 'task_counts') {
+          setTaskCounts(data.counts || {});
+        } else if (data.type === 'task_update') {
+          setLastTaskUpdate(data.task);
+          // Refresh task counts on task update
+          fetchTaskCounts();
         }
       };
 
@@ -55,5 +63,22 @@ export const useWebSocket = (url: string) => {
     };
   }, [url]);
 
-  return { agents, logs, systemOnline, stats };
+  const fetchTaskCounts = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/tasks/counts');
+      if (res.ok) {
+        const counts = await res.json();
+        setTaskCounts(counts);
+      }
+    } catch (err) {
+      // Silently fail
+    }
+  };
+
+  // Fetch task counts on mount
+  useEffect(() => {
+    fetchTaskCounts();
+  }, []);
+
+  return { agents, logs, systemOnline, stats, taskCounts, lastTaskUpdate };
 };

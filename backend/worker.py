@@ -22,6 +22,7 @@ async def main():
         activities=[
             activities.process_hermes_task,
             activities.save_task_to_memory,
+            activities.report_task_status,
         ],
     )
     

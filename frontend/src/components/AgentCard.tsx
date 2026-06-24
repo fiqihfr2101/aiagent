@@ -44,6 +44,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, onEdit, onDelete,
       }`}
       onClick={() => onClick(agent.id)}
     >
+      {/* Active task count badge */}
+      {taskCount > 0 && (
+        <div className="absolute top-2 right-2 z-20 flex items-center gap-1 px-1.5 py-[2px] rounded-full bg-cyan-custom/20 border border-cyan-custom/40">
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-custom animate-pulse" />
+          <span className="text-[8px] font-mono font-bold text-cyan-custom">{taskCount}</span>
+        </div>
+      )}
+
       <div className="relative z-10">
         <div className="flex items-center justify-between mb-[10px]">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-[13px] font-mono flex-shrink-0 bg-[rgba(0,212,170,0.15)] text-cyan-custom border border-[rgba(0,212,170,0.3)]">
@@ -79,7 +87,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onClick, onEdit, onDelete,
           </div>
           <div className="text-[8px] text-txt3 font-mono flex flex-col gap-[2px]">
             <span className="text-txt3">TASKS</span>
-            <span className="text-[11px] font-semibold text-cyan-custom font-mono">{taskCount}</span>
+            <span className={`text-[11px] font-semibold font-mono ${taskCount > 0 ? 'text-cyan-custom' : 'text-txt3'}`}>{taskCount}</span>
           </div>
         </div>
         <div className="flex items-center justify-between mt-[7px]">

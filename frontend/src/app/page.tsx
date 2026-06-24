@@ -10,6 +10,8 @@ import MemoryView from '@/components/MemoryView';
 import AnalyticsView from '@/components/AnalyticsView';
 import AddAgentModal from '@/components/AddAgentModal';
 import EditAgentModal from '@/components/EditAgentModal';
+import TaskDispatchModal from '@/components/TaskDispatchModal';
+import TaskHistory from '@/components/TaskHistory';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { Agent, LogEntry } from '@/types';
 
@@ -25,8 +27,9 @@ export default function MissionControl() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
-  const { agents, logs, systemOnline, stats } = useWebSocket('ws://localhost:8000/ws');
+  const { agents, logs, systemOnline, stats, taskCounts } = useWebSocket('ws://localhost:8000/ws');
 
   const handleOpenDrawer = (id: string) => {
     setSelectedAgentId(id);
@@ -88,7 +91,7 @@ export default function MissionControl() {
       
       <NavBar 
         activeL1={activeL1} 
-        setActiveL1={setActiveL1} 
+        setActiveL1={(val: string) => { setActiveL1(val); setActiveL2('overview'); }} 
         systemStatus={systemOnline ? 'ONLINE' : 'OFFLINE'}
         activeCount={`${stats.active_nodes} / 12 active`}
       />
@@ -144,6 +147,12 @@ export default function MissionControl() {
                 Agent fleet · live status
                 <div className="flex-1 h-px bg-border-custom"></div>
                 <button
+                  onClick={() => setIsTaskModalOpen(true)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-[6px] text-[9px] font-bold font-mono bg-grn-custom/15 border border-grn-custom/30 text-grn-custom hover:bg-grn-custom/25 transition-colors tracking-[0.06em]"
+                >
+                  <span className="text-[11px]">⚡</span> DISPATCH TASK
+                </button>
+                <button
                   onClick={() => setIsAddModalOpen(true)}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-[6px] text-[9px] font-bold font-mono bg-cyan-custom/15 border border-cyan-custom/30 text-cyan-custom hover:bg-cyan-custom/25 transition-colors tracking-[0.06em]"
                 >
@@ -158,6 +167,7 @@ export default function MissionControl() {
                     onClick={() => handleOpenDrawer(agent.id)}
                     onEdit={handleEditAgent}
                     onDelete={handleDeleteAgent}
+                    taskCount={taskCounts[agent.id] || 0}
                   />
                 ))}
               </div>
@@ -171,6 +181,12 @@ export default function MissionControl() {
 
         {activeL1 === 'overview' && activeL2 === 'console' && (
           <Console logs={logs} agents={agents} />
+        )}
+
+        {activeL1 === 'overview' && activeL2 === 'tasks' && (
+          <div className="view on h-full animate-fadein">
+            <TaskHistory agents={agents} />
+          </div>
         )}
 
         {activeL1 === 'memory' && (
@@ -196,6 +212,14 @@ export default function MissionControl() {
         agent={editingAgent}
         onClose={() => { setIsEditModalOpen(false); setEditingAgent(null); }}
         onAgentUpdated={handleAgentUpdated}
+      />
+
+      {/* TASK DISPATCH MODAL */}
+      <TaskDispatchModal
+        isOpen={isTaskModalOpen}
+        onClose={() => setIsTaskModalOpen(false)}
+        agents={agents}
+        preSelectedAgentId={selectedAgentId || undefined}
       />
 
       {/* DRAWER & OVERLAY */}
@@ -227,6 +251,13 @@ export default function MissionControl() {
                     {activeAgent.model}
                   </span>
                 )}
+                {/* Active task count in drawer */}
+                {(taskCounts[activeAgent.id] || 0) > 0 && (
+                  <span className="px-2 py-[2px] rounded-full text-[8px] font-bold font-mono border border-cyan-custom/30 bg-cyan-custom/10 text-cyan-custom flex items-center gap-1">
+                    <span className="w-1 h-1 rounded-full bg-cyan-custom animate-pulse" />
+                    {taskCounts[activeAgent.id]} active task{(taskCounts[activeAgent.id] || 0) > 1 ? 's' : ''}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -248,11 +279,25 @@ export default function MissionControl() {
                        <div className="text-[8px] text-txt2 uppercase tracking-wider mb-1">Heartbeat</div>
                        <div className="text-lg font-mono font-bold text-cyan-custom">{activeAgent.hb}</div>
                      </div>
+                     <div className="bg-bg3 border border-border-custom rounded-lg p-3">
+                       <div className="text-[8px] text-txt2 uppercase tracking-wider mb-1">Active Tasks</div>
+                       <div className="text-lg font-mono font-bold text-cyan-custom">{taskCounts[activeAgent.id] || 0}</div>
+                     </div>
+                     <div className="bg-bg3 border border-border-custom rounded-lg p-3">
+                       <div className="text-[8px] text-txt2 uppercase tracking-wider mb-1">Model</div>
+                       <div className="text-xs font-mono font-bold text-purple-400 truncate">{activeAgent.model || 'N/A'}</div>
+                     </div>
                    </div>
                    <div className="text-txt2 text-[11px] leading-relaxed">
                      Agent {activeAgent.name} is currently {activeAgent.status}. 
                      Last seen {activeAgent.seen}.
                    </div>
+                   <button
+                     onClick={() => setIsTaskModalOpen(true)}
+                     className="mt-4 w-full py-2 rounded-lg text-[10px] font-bold font-mono bg-cyan-custom/15 border border-cyan-custom/30 text-cyan-custom hover:bg-cyan-custom/25 transition-colors tracking-[0.06em]"
+                   >
+                     ⚡ DISPATCH TASK TO {activeAgent.name}
+                   </button>
                  </div>
                )}
 

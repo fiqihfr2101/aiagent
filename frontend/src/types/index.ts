@@ -45,3 +45,35 @@ export interface Memory {
   ts: string;
   src: string;
 }
+
+// ─── Task Dispatch Types ─────────────────────────────────────────
+
+export type TaskStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'STOPPED';
+export type TaskPriority = 'P1' | 'P2' | 'P3';
+
+export interface DispatchTask {
+  id: string;
+  agent_id: string;
+  title: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  duration?: number;
+  result?: string;
+  tokens_used: number;
+  workflow_id?: string;
+}
+
+export interface TaskHistoryResponse {
+  tasks: DispatchTask[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface TaskCounts {
+  [agent_id: string]: number;
+}

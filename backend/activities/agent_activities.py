@@ -24,7 +24,20 @@ class AgentActivities:
         except Exception as e:
             print(f"Failed to send log to API: {e}")
 
-    @activity.def
+    async def _update_task_status(self, task_id: str, status: str, result: str = None, tokens_used: int = None):
+        """Update task status in DB via internal API."""
+        try:
+            async with httpx.AsyncClient() as client:
+                payload = {"status": status}
+                if result:
+                    payload["result"] = result
+                if tokens_used is not None:
+                    payload["tokens_used"] = tokens_used
+                await client.post(f"{self.api_url}/tasks/{task_id}/status", json=payload)
+        except Exception as e:
+            print(f"Failed to update task status: {e}")
+
+    @activity.defn
     async def process_hermes_task(self, task_data: dict) -> dict:
         agent_id = task_data.get("agent_id")
         prompt = task_data.get("title")
@@ -50,7 +63,7 @@ class AgentActivities:
                 "error": str(e)
             }
 
-    @activity.def
+    @activity.defn
     async def save_task_to_memory(self, result: dict) -> bool:
         if result.get("status") == "completed":
             agent_id = result.get("agent_id")
@@ -64,3 +77,21 @@ class AgentActivities:
             )
             return True
         return False
+
+    @activity.defn
+    async def report_task_status(self, data: dict) -> bool:
+        """Report task status change to the main API, which updates DB and broadcasts via WebSocket."""
+        task_id = data.get("task_id")
+        status = data.get("status")
+        result = data.get("result")
+        error = data.get("error")
+
+        result_str = None
+        if result:
+            import json
+            result_str = json.dumps(result) if isinstance(result, dict) else str(result)
+        elif error:
+            result_str = str(error)
+
+        await self._update_task_status(task_id, status, result=result_str)
+        return True
