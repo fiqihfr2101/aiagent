@@ -39,6 +39,7 @@ from app.interfaces.schemas import (
     MessageSend, MessageMarkRead,
     sanitize_plain, sanitize_text,
     WorkflowCreate, WorkflowUpdate,
+    MemorySearch, MemoryShare,
 )
 
 # ─── Input Sanitization Helpers ─────────────────────────────────
@@ -367,6 +368,50 @@ async def submit_task(data: TaskSubmit):
 @app.get("/memories/{agent_id}")
 async def get_memories(agent_id: str):
     return await memory.get_all_for_agent(agent_id)
+
+@app.post("/memories/search")
+async def search_memories(data: MemorySearch):
+    """Semantic search across memories with filters."""
+    results = await memory.semantic_search(
+        query_text=data.query,
+        agent_id=data.agent_id,
+        mem_type=data.type,
+        include_shared=data.include_shared,
+        include_archived=data.include_archived,
+        n_results=data.limit,
+    )
+    return {"results": results, "count": len(results), "query": data.query}
+
+@app.post("/memories/share")
+async def share_memory(data: MemoryShare):
+    """Share a memory from one agent to another."""
+    # Verify both agents exist
+    from_agent = hermes.get_agent(data.from_agent_id)
+    if not from_agent:
+        raise HTTPException(status_code=404, detail="Source agent not found")
+    to_agent = hermes.get_agent(data.to_agent_id)
+    if not to_agent:
+        raise HTTPException(status_code=404, detail="Target agent not found")
+
+    result = await memory.share_memory(data.memory_id, data.from_agent_id, data.to_agent_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+@app.get("/memories/{agent_id}/stats")
+async def get_memory_stats(agent_id: str):
+    """Get memory statistics for an agent."""
+    return await memory.get_stats(agent_id)
+
+@app.post("/memories/{agent_id}/archive")
+async def archive_memories(agent_id: str, older_than_days: int = Query(30, ge=1, le=365)):
+    """Archive old memories for an agent."""
+    return await memory.archive_old_memories(agent_id, older_than_days)
+
+@app.post("/memories/{agent_id}/consolidate")
+async def consolidate_memories(agent_id: str, threshold: float = Query(0.85, ge=0.5, le=0.99)):
+    """Consolidate similar memories for an agent."""
+    return await memory.consolidate_similar(agent_id, threshold)
 
 
 # ─── Agent CRUD Endpoints ─────────────────────────────────────────

@@ -44,6 +44,10 @@ export interface Memory {
   body: string;
   ts: string;
   src: string;
+  importance?: number;
+  shared?: boolean;
+  archived?: boolean;
+  expires_at?: string;
 }
 
 // ─── Task Dispatch Types ─────────────────────────────────────────
@@ -122,4 +126,31 @@ export interface Conversation {
   agent_id: string;
   last_message_at: string;
   message_count: number;
+}
+
+// ─── Advanced Memory Types ──────────────────────────────────────
+
+export interface MemorySearchResult {
+  id: string;
+  agent_id: string;
+  type: 'fact' | 'proc' | 'ctx' | 'ref';
+  title: string;
+  body: string;
+  ts: string;
+  src: string;
+  importance: number;
+  relevance: number;
+  shared: boolean;
+}
+
+export interface MemoryStats {
+  agent_id: string;
+  total: number;
+  active: number;
+  archived: number;
+  shared: number;
+  shared_pool: number;
+  by_type: Record<string, number>;
+  avg_importance: number;
+  total_accesses: number;
 }

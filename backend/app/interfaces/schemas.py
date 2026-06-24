@@ -624,3 +624,69 @@ class WorkflowUpdate(BaseModel):
         if not v:
             raise ValueError("Name cannot be empty")
         return v
+
+
+# ─── Memory Schemas ──────────────────────────────────────────────
+
+VALID_MEMORY_TYPES = {"fact", "proc", "ctx", "ref"}
+
+
+class MemorySearch(BaseModel):
+    """Schema for semantic search across memories."""
+    query: str = Field(..., min_length=1, max_length=1000, description="Search query text")
+    agent_id: Optional[str] = Field(None, max_length=100, description="Filter by agent ID")
+    type: Optional[str] = Field(None, max_length=10, description="Filter by memory type")
+    include_shared: bool = Field(default=True, description="Include shared memories")
+    include_archived: bool = Field(default=False, description="Include archived memories")
+    limit: int = Field(default=10, ge=1, le=50, description="Max results")
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, v: str) -> str:
+        v = sanitize_plain(v)
+        if not v:
+            raise ValueError("Query cannot be empty")
+        return v
+
+    @field_validator("agent_id")
+    @classmethod
+    def validate_agent_id_field(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = sanitize_plain(v)
+        if not AGENT_ID_PATTERN.match(v):
+            raise ValueError("Agent ID contains invalid characters")
+        return v
+
+    @field_validator("type")
+    @classmethod
+    def validate_memory_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = sanitize_plain(v).lower()
+        if v not in VALID_MEMORY_TYPES:
+            raise ValueError(f"Invalid memory type. Must be one of: {', '.join(sorted(VALID_MEMORY_TYPES))}")
+        return v
+
+
+class MemoryShare(BaseModel):
+    """Schema for sharing memory between agents."""
+    memory_id: str = Field(..., min_length=1, max_length=100, description="Memory ID to share")
+    from_agent_id: str = Field(..., min_length=1, max_length=100, description="Source agent ID")
+    to_agent_id: str = Field(..., min_length=1, max_length=100, description="Target agent ID")
+
+    @field_validator("memory_id")
+    @classmethod
+    def validate_memory_id(cls, v: str) -> str:
+        v = sanitize_plain(v)
+        if not AGENT_ID_PATTERN.match(v):
+            raise ValueError("Memory ID contains invalid characters")
+        return v
+
+    @field_validator("from_agent_id", "to_agent_id")
+    @classmethod
+    def validate_share_agent_id(cls, v: str) -> str:
+        v = sanitize_plain(v)
+        if not AGENT_ID_PATTERN.match(v):
+            raise ValueError("Agent ID contains invalid characters")
+        return v
