@@ -242,6 +242,8 @@ async def dispatch_task(task_data: TaskCreate):
         task_repo.update_status(task["id"], "RUNNING")
         task["status"] = "RUNNING"
         asyncio.create_task(_simulate_task(task["id"], task_data.agent_id, task_data.title))
+        # Track task start in metrics
+        await metrics_collector.start_task(task["id"], task_data.agent_id)
 
     await hermes.log("SYSTEM", "INFO", f"Task dispatched: {task_data.title} → {agent['name']}")
     
@@ -261,12 +263,28 @@ async def _simulate_task(task_id: str, agent_id: str, title: str):
     _active_sim_tasks[task_id] = asyncio.current_task()
     await asyncio.sleep(random.randint(3, 10))
     tokens = random.randint(100, 5000)
+    input_tokens = random.randint(50, tokens // 2)
+    output_tokens = tokens - input_tokens
     result = json.dumps({"output": f"Simulated completion of: {title}"})
     # Only complete if not already stopped
     current = task_repo.get_by_id(task_id)
     if current and current["status"] == "RUNNING":
         task_repo.update_status(task_id, "COMPLETED", result=result, tokens_used=tokens)
         task = task_repo.get_by_id(task_id)
+
+        # Track cost in metrics collector
+        agent = hermes.get_agent(agent_id)
+        model = agent.get("model", "default") if agent else "default"
+        await metrics_collector.complete_task(
+            task_id=task_id,
+            success=True,
+            duration=random.uniform(3.0, 10.0),
+            token_usage=tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            model=model,
+        )
+
         await hermes.log("SYSTEM", "INFO", f"Task completed: {title}")
         await manager.broadcast(json.dumps({
             "type": "task_update",
@@ -391,6 +409,42 @@ async def collect_metrics(request: Request):
     data = await request.json()
     result = await metrics_collector.ingest_external_metrics(data)
     return result
+
+
+# ─── Cost Tracking Endpoints ─────────────────────────────────────
+
+@app.get("/metrics/costs")
+async def get_cost_summary():
+    """Get total cost summary with trend."""
+    return await metrics_collector.get_cost_summary()
+
+@app.get("/metrics/costs/agents")
+async def get_cost_by_agent():
+    """Get cost breakdown by agent."""
+    return await metrics_collector.get_cost_by_agent()
+
+@app.get("/metrics/costs/models")
+async def get_cost_by_model():
+    """Get cost breakdown by model."""
+    return await metrics_collector.get_cost_by_model()
+
+@app.get("/metrics/costs/daily")
+async def get_cost_daily(days: int = Query(30, ge=1, le=365)):
+    """Get daily cost trend."""
+    return await metrics_collector.get_cost_daily(days)
+
+@app.get("/metrics/costs/rates")
+async def get_model_rates():
+    """Get current model token rates."""
+    return await metrics_collector.get_model_rates()
+
+@app.put("/metrics/costs/rates/{model}")
+async def update_model_rate(model: str, request: Request):
+    """Update token rates for a model."""
+    data = await request.json()
+    return await metrics_collector.update_model_rate(
+        model, data.get("input", 0.003), data.get("output", 0.015)
+    )
 
 # ─── WebSocket ────────────────────────────────────────────────────
 

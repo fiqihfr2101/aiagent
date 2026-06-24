@@ -28,6 +28,7 @@ const NavBar: React.FC<NavBarProps> = ({ activeL1, setActiveL1, systemStatus, ac
           { id: 'overview', label: 'Dashboard' },
           { id: 'memory', label: 'Memory' },
           { id: 'analytics-main', label: 'Analytics' },
+          { id: 'costs', label: 'Costs' },
         ].map((tab) => (
           <div
             key={tab.id}

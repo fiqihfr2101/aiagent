@@ -8,6 +8,7 @@ import NodeGraph from '@/components/NodeGraph';
 import Console from '@/components/Console';
 import MemoryView from '@/components/MemoryView';
 import AnalyticsView from '@/components/AnalyticsView';
+import CostDashboard from '@/components/CostDashboard';
 import AddAgentModal from '@/components/AddAgentModal';
 import EditAgentModal from '@/components/EditAgentModal';
 import TaskDispatchModal from '@/components/TaskDispatchModal';
@@ -222,6 +223,12 @@ export default function MissionControl() {
 
         {activeL1 === 'analytics-main' && (
           <AnalyticsView />
+        )}
+
+        {activeL1 === 'costs' && (
+          <div className="view on h-full animate-fadein">
+            <CostDashboard />
+          </div>
         )}
 
       </main>
