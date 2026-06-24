@@ -6,8 +6,10 @@ import Sidebar from '@/components/Sidebar';
 import AgentCard from '@/components/AgentCard';
 import NotificationBell from '@/components/NotificationBell';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Agent, LogEntry, TaskLog } from '@/types';
 import { ProtectedRoute } from '@/contexts/AuthContext';
+import { ExportButton, exportTaskHistory, exportAnalytics } from '@/utils/exportUtils';
 
 // Dynamic imports for heavy components (code splitting)
 const NodeGraph = lazy(() => import('@/components/NodeGraph'));
@@ -25,6 +27,8 @@ const MessageCenter = lazy(() => import('@/components/MessageCenter'));
 const WorkflowBuilder = lazy(() => import('@/components/WorkflowBuilder'));
 const Marketplace = lazy(() => import('@/components/Marketplace'));
 const PluginManager = lazy(() => import('@/components/PluginManager'));
+const CommandPalette = lazy(() => import('@/components/CommandPalette'));
+const ShortcutsHelp = lazy(() => import('@/components/ShortcutsHelp'));
 
 // Loading fallback for lazy components
 const ComponentLoader = () => (
@@ -47,6 +51,8 @@ export default function MissionControl() {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [pluginsTab, setPluginsTab] = useState<'marketplace' | 'installed'>('marketplace');
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [isShortcutsHelpOpen, setIsShortcutsHelpOpen] = useState(false);
 
   const { agents, logs, systemOnline, connectionStatus, stats, taskCounts, lastStoppedTask, stoppingAgentIds, markAgentStopping, lastModelUpdate, lastNotification, lastNewLog, lastAgentMessage } = useWebSocket('ws://localhost:8000/ws', {
     channels: ['agents', 'tasks', 'metrics', 'logs', 'notifications', 'system', 'messages'],
@@ -204,6 +210,48 @@ export default function MissionControl() {
     () => logs.filter(l => l[1] === activeAgent?.name),
     [logs, activeAgent?.name]
   );
+
+  // ── Keyboard Shortcuts ──────────────────────────────────────────
+  const isAnyModalOpen = isAddModalOpen || isEditModalOpen || isTaskModalOpen || isDrawerOpen || isCommandPaletteOpen || isShortcutsHelpOpen;
+
+  const closeTopModal = useCallback(() => {
+    if (isCommandPaletteOpen) { setIsCommandPaletteOpen(false); return; }
+    if (isShortcutsHelpOpen) { setIsShortcutsHelpOpen(false); return; }
+    if (isAddModalOpen) { setIsAddModalOpen(false); return; }
+    if (isEditModalOpen) { setIsEditModalOpen(false); setEditingAgent(null); return; }
+    if (isTaskModalOpen) { setIsTaskModalOpen(false); return; }
+    if (isDrawerOpen) { setIsDrawerOpen(false); return; }
+  }, [isCommandPaletteOpen, isShortcutsHelpOpen, isAddModalOpen, isEditModalOpen, isTaskModalOpen, isDrawerOpen]);
+
+  useKeyboardShortcuts({
+    onCommandPalette: useCallback(() => setIsCommandPaletteOpen(prev => !prev), []),
+    onNewAgent: useCallback(() => setIsAddModalOpen(true), []),
+    onNewTask: useCallback(() => setIsTaskModalOpen(true), []),
+    onShortcutsHelp: useCallback(() => setIsShortcutsHelpOpen(prev => !prev), []),
+    onEscape: closeTopModal,
+  });
+
+  // ── Command Palette Actions ─────────────────────────────────────
+  const commandActions = useMemo(() => [
+    // Navigation
+    { id: 'nav-overview', label: 'Dashboard Overview', icon: '📊', category: 'Navigation', shortcut: '', action: () => { setActiveL1('overview'); setActiveL2('overview'); } },
+    { id: 'nav-messages', label: 'Messages', icon: '💬', category: 'Navigation', action: () => setActiveL1('messages') },
+    { id: 'nav-memory', label: 'Memory', icon: '🧠', category: 'Navigation', action: () => setActiveL1('memory') },
+    { id: 'nav-analytics', label: 'Analytics', icon: '📈', category: 'Navigation', action: () => setActiveL1('analytics-main') },
+    { id: 'nav-costs', label: 'Cost Dashboard', icon: '💰', category: 'Navigation', action: () => setActiveL1('costs') },
+    { id: 'nav-workflows', label: 'Workflows', icon: '⚡', category: 'Navigation', action: () => setActiveL1('workflows') },
+    { id: 'nav-plugins', label: 'Plugins', icon: '🧩', category: 'Navigation', action: () => setActiveL1('plugins') },
+    { id: 'nav-graph', label: 'Node Graph', icon: '🔗', category: 'Navigation', action: () => { setActiveL1('overview'); setActiveL2('graph'); } },
+    { id: 'nav-console', label: 'Console', icon: '💻', category: 'Navigation', action: () => { setActiveL1('overview'); setActiveL2('console'); } },
+    { id: 'nav-tasks', label: 'Task History', icon: '📋', category: 'Navigation', action: () => { setActiveL1('overview'); setActiveL2('tasks'); } },
+    { id: 'nav-logs', label: 'Logs', icon: '📝', category: 'Navigation', action: () => { setActiveL1('overview'); setActiveL2('logs'); } },
+    // Actions
+    { id: 'action-add-agent', label: 'Add New Agent', icon: '➕', category: 'Actions', shortcut: 'Ctrl+N', action: () => setIsAddModalOpen(true) },
+    { id: 'action-dispatch', label: 'Dispatch Task', icon: '⚡', category: 'Actions', shortcut: 'Ctrl+T', action: () => setIsTaskModalOpen(true) },
+    { id: 'action-templates', label: 'Templates Manager', icon: '📦', category: 'Actions', action: () => { setActiveL1('overview'); setActiveL2('templates'); } },
+    // Help
+    { id: 'help-shortcuts', label: 'Keyboard Shortcuts', icon: '⌨️', category: 'Help', shortcut: 'Ctrl+/', action: () => setIsShortcutsHelpOpen(true) },
+  ], [setActiveL1, setActiveL2]);
 
   return (
     <ProtectedRoute>
@@ -383,9 +431,30 @@ export default function MissionControl() {
         )}
 
         {activeL1 === 'analytics-main' && (
-          <Suspense fallback={<ComponentLoader />}>
-            <AnalyticsView />
-          </Suspense>
+          <div className="view on h-full animate-fadein flex flex-col">
+            <div className="flex-shrink-0 flex items-center justify-between px-[20px] pt-[20px]">
+              <div />
+              <ExportButton
+                onExport={(format) => {
+                  exportAnalytics({
+                    timestamp: new Date().toISOString(),
+                    kpis: [
+                      { label: 'Tasks/hour', value: '312' },
+                      { label: 'Avg latency', value: '1.8s' },
+                      { label: 'Error rate', value: '0.4%' },
+                      { label: 'Fleet uptime', value: '98.2%' },
+                    ],
+                    agentCount: agents.length,
+                    activeCount: stats.running,
+                  }, format);
+                }}
+                label="Export Analytics"
+              />
+            </div>
+            <Suspense fallback={<ComponentLoader />}>
+              <AnalyticsView />
+            </Suspense>
+          </div>
         )}
 
         {activeL1 === 'costs' && (
@@ -607,6 +676,27 @@ export default function MissionControl() {
             </div>
           </div>
         </>
+      )}
+
+      {/* Command Palette */}
+      {isCommandPaletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette
+            isOpen={isCommandPaletteOpen}
+            onClose={() => setIsCommandPaletteOpen(false)}
+            actions={commandActions}
+          />
+        </Suspense>
+      )}
+
+      {/* Shortcuts Help */}
+      {isShortcutsHelpOpen && (
+        <Suspense fallback={null}>
+          <ShortcutsHelp
+            isOpen={isShortcutsHelpOpen}
+            onClose={() => setIsShortcutsHelpOpen(false)}
+          />
+        </Suspense>
       )}
     </div>
     </ProtectedRoute>

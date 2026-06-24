@@ -2,6 +2,7 @@
 import React, { memo } from 'react';
 
 import CacheStatusIndicator from './CacheStatusIndicator';
+import { useTheme } from '@/contexts/ThemeContext';
 
 interface NavBarProps {
   activeL1: string;
@@ -12,6 +13,8 @@ interface NavBarProps {
 }
 
 const NavBar: React.FC<NavBarProps> = memo(({ activeL1, setActiveL1, systemStatus, activeCount, children }) => {
+  const { theme, toggleTheme } = useTheme();
+  
   return (
     <nav className="flex-shrink-0 h-[44px] bg-[rgba(7,9,15,0.95)] border-b border-border-custom flex items-center px-4 gap-0 backdrop-blur-xl z-50">
       <div className="flex items-center gap-[9px] mr-6 cursor-pointer" onClick={() => setActiveL1('overview')}>
@@ -56,6 +59,33 @@ const NavBar: React.FC<NavBarProps> = memo(({ activeL1, setActiveL1, systemStatu
           SYSTEM {systemStatus}
         </div>
         <div className="font-mono text-[10px] text-txt2">{activeCount}</div>
+        {/* Theme toggle */}
+        <button
+          onClick={toggleTheme}
+          className="w-7 h-7 rounded-md border border-border-custom bg-transparent flex items-center justify-center cursor-pointer text-txt3 hover:text-txt hover:border-border2 transition-all duration-150"
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+        >
+          {theme === 'dark' ? (
+            <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-[14px] h-[14px] stroke-current">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-[14px] h-[14px] stroke-current">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          )}
+        </button>
+        {/* Keyboard shortcuts hint */}
+        <button
+          className="w-7 h-7 rounded-md border border-border-custom bg-transparent flex items-center justify-center cursor-pointer text-txt3 hover:text-txt hover:border-border2 transition-all duration-150"
+          title="Keyboard shortcuts: Ctrl+K, Ctrl+N, Ctrl+T, Ctrl+/"
+        >
+          <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-[14px] h-[14px] stroke-current">
+            <rect x="2" y="6" width="20" height="12" rx="2" />
+            <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
+          </svg>
+        </button>
         {children || (
           <div className="w-7 h-7 rounded-md border border-border-custom bg-transparent flex items-center justify-center cursor-pointer text-txt3 hover:text-txt hover:border-border2 transition-all duration-150">
             <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-[14px] h-[14px] stroke-current">
