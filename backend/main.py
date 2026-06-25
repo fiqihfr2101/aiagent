@@ -29,7 +29,9 @@ from app.infrastructure.auth_service import (
     LoginRequest, RefreshRequest, LogoutRequest,
     authenticate_user, create_token_pair, validate_token,
     revoke_token, revoke_all_user_tokens, register_user,
+    change_password, set_user_2fa_secret, enable_2fa, disable_2fa, get_user_2fa_info,
 )
+from app.infrastructure.account_service import setup_2fa, verify_totp_code
 from app.infrastructure.rate_limiter import rate_limiter
 from app.interfaces.schemas import (
     AgentCreate, AgentUpdate, AgentModelUpdate,
@@ -43,6 +45,7 @@ from app.interfaces.schemas import (
     WorkflowCreate, WorkflowUpdate,
     MemorySearch, MemoryShare,
     PluginInstall, PluginConfigUpdate,
+    PasswordChangeRequest, TwoFASetupRequest, TwoFAVerifyRequest, TwoFADisableRequest,
 )
 from app.interfaces.config_schemas import (
     AgentConfigSave, AgentConfigClone,
@@ -291,17 +294,31 @@ async def health():
 
 @app.post("/auth/login")
 async def auth_login(request: Request, login_data: SchemaLoginRequest):
-    """Authenticate user and return JWT tokens."""
+    """Authenticate user and return JWT tokens. Supports 2FA."""
     # Log sanitized username for audit trail (never log password)
     logger.info("Login attempt for user: %s [ip=%s]", login_data.username, request.client.host if request.client else "unknown")
-    user = authenticate_user(login_data.username, login_data.password)
+    user = authenticate_user(login_data.username, login_data.password, login_data.totp_code)
     if not user:
         logger.warning("Failed login attempt for user: %s", login_data.username)
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
+    # If 2FA is required but no code was provided
+    if user.get("requires_2fa"):
+        return {
+            "requires_2fa": True,
+            "username": user["username"],
+            "message": "2FA code required",
+        }
+
     tokens = create_token_pair(user)
     logger.info("User logged in: %s", user["username"])
-    return tokens
+    return {
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "token_type": tokens.token_type,
+        "expires_in": tokens.expires_in,
+        "requires_2fa": False,
+    }
 
 
 @app.post("/auth/refresh")
@@ -336,7 +353,7 @@ async def auth_logout(request: Request, logout_data: LogoutRequest):
 
 @app.get("/auth/me")
 async def auth_me(request: Request):
-    """Get current authenticated user info."""
+    """Get current authenticated user info including 2FA status."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -345,7 +362,137 @@ async def auth_me(request: Request):
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    return {"username": payload["sub"], "role": payload.get("role", "user")}
+    two_fa = get_user_2fa_info(payload["sub"])
+    return {
+        "username": payload["sub"],
+        "role": payload.get("role", "user"),
+        "two_fa_enabled": two_fa["enabled"] if two_fa else False,
+    }
+
+
+# ─── Account Management Endpoints ──────────────────────────────────
+
+@app.put("/auth/password")
+async def auth_change_password(request: Request, data: PasswordChangeRequest):
+    """Change the current user's password."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = validate_token(auth_header[7:], token_type="access")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    success = change_password(payload["sub"], data.current_password, data.new_password)
+    if not success:
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    return {"status": "ok", "message": "Password changed successfully"}
+
+
+@app.post("/auth/2fa/setup")
+async def auth_2fa_setup(request: Request, data: TwoFASetupRequest):
+    """Generate a 2FA secret and QR code for setup."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = validate_token(auth_header[7:], token_type="access")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # Verify password
+    from app.infrastructure.auth_service import _verify_password, _users_db
+    user = _users_db.get(payload["sub"])
+    if not user or not _verify_password(data.password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+
+    # Generate 2FA setup
+    setup_data = setup_2fa(payload["sub"])
+
+    # Store the secret temporarily (not enabled yet)
+    set_user_2fa_secret(payload["sub"], setup_data["secret"])
+
+    return {
+        "qr_code": setup_data["qr_code"],
+        "secret": setup_data["secret"],
+    }
+
+
+@app.post("/auth/2fa/enable")
+async def auth_2fa_enable(request: Request, data: TwoFAVerifyRequest):
+    """Enable 2FA after verifying a TOTP code."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = validate_token(auth_header[7:], token_type="access")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # Check if secret is set
+    two_fa_info = get_user_2fa_info(payload["sub"])
+    if not two_fa_info or not two_fa_info["has_secret"]:
+        raise HTTPException(status_code=400, detail="2FA setup not initiated. Call /auth/2fa/setup first.")
+
+    # Verify the code against the stored secret
+    from app.infrastructure.auth_service import _users_db
+    user = _users_db.get(payload["sub"])
+    if not user or not verify_totp_code(user["2fa_secret"], data.code):
+        raise HTTPException(status_code=400, detail="Invalid 2FA code")
+
+    success = enable_2fa(payload["sub"])
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to enable 2FA")
+
+    return {"status": "ok", "message": "2FA enabled successfully"}
+
+
+@app.post("/auth/2fa/disable")
+async def auth_2fa_disable(request: Request, data: TwoFADisableRequest):
+    """Disable 2FA after verifying password."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = validate_token(auth_header[7:], token_type="access")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # Verify password
+    from app.infrastructure.auth_service import _verify_password, _users_db
+    user = _users_db.get(payload["sub"])
+    if not user or not _verify_password(data.password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+
+    success = disable_2fa(payload["sub"])
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to disable 2FA")
+
+    return {"status": "ok", "message": "2FA disabled successfully"}
+
+
+@app.post("/auth/2fa/verify")
+async def auth_2fa_verify(request: Request, data: TwoFAVerifyRequest):
+    """Verify a 2FA code (used during login flow)."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = validate_token(auth_header[7:], token_type="access")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    from app.infrastructure.auth_service import _users_db
+    user = _users_db.get(payload["sub"])
+    if not user or not user.get("2fa_secret"):
+        raise HTTPException(status_code=400, detail="2FA not configured")
+
+    valid = verify_totp_code(user["2fa_secret"], data.code)
+    if not valid:
+        raise HTTPException(status_code=400, detail="Invalid 2FA code")
+
+    return {"status": "ok", "message": "2FA code valid"}
 
 @app.post("/log")
 async def receive_log(data: LogReceive):

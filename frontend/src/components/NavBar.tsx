@@ -1,8 +1,9 @@
 
-import React, { memo } from 'react';
+import React, { memo, useState, useRef, useEffect } from 'react';
 
 import CacheStatusIndicator from './CacheStatusIndicator';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface NavBarProps {
   activeL1: string;
@@ -14,7 +15,21 @@ interface NavBarProps {
 
 const NavBar: React.FC<NavBarProps> = memo(({ activeL1, setActiveL1, systemStatus, activeCount, children }) => {
   const { theme, toggleTheme } = useTheme();
-  
+  const { user, logout } = useAuth();
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close menu on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
   return (
     <nav className="flex-shrink-0 h-[44px] bg-[rgba(7,9,15,0.95)] border-b border-border-custom flex items-center px-4 gap-0 backdrop-blur-xl z-50">
       <div className="flex items-center gap-[9px] mr-6 cursor-pointer" onClick={() => setActiveL1('overview')}>
@@ -93,7 +108,45 @@ const NavBar: React.FC<NavBarProps> = memo(({ activeL1, setActiveL1, systemStatu
             </svg>
           </div>
         )}
-        <div className="w-[26px] h-[26px] rounded-full bg-linear-to-br from-ind-custom to-[#4338CA] flex items-center justify-center text-[10px] font-bold text-white">FQ</div>
+        {/* User avatar with dropdown */}
+        <div className="relative" ref={menuRef}>
+          <div
+            onClick={() => setShowUserMenu(!showUserMenu)}
+            className="w-[26px] h-[26px] rounded-full bg-linear-to-br from-ind-custom to-[#4338CA] flex items-center justify-center text-[10px] font-bold text-white cursor-pointer hover:ring-2 hover:ring-cyan-custom/30 transition-all"
+          >
+            {user?.username?.[0]?.toUpperCase() || 'U'}
+          </div>
+          {showUserMenu && (
+            <div className="absolute right-0 top-full mt-2 w-52 bg-[#111827] border border-gray-700/50 rounded-xl shadow-2xl py-1 z-[60] animate-fadein">
+              <div className="px-4 py-2.5 border-b border-gray-700/50">
+                <div className="text-sm text-white font-medium">{user?.username}</div>
+                <div className="text-[10px] text-gray-400 font-mono capitalize">{user?.role}</div>
+              </div>
+              <a
+                href="/settings"
+                className="flex items-center gap-2.5 px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-white/5 transition-colors"
+                onClick={() => setShowUserMenu(false)}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Account Settings
+              </a>
+              <div className="border-t border-gray-700/50 mt-1 pt-1">
+                <button
+                  onClick={() => { setShowUserMenu(false); logout(); }}
+                  className="flex items-center gap-2.5 w-full px-4 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/5 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </nav>
   );

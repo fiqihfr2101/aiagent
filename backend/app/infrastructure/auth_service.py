@@ -38,12 +38,14 @@ _refresh_tokens: dict[str, dict] = {}
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=50)
     password: str = Field(..., min_length=1, max_length=128)
+    totp_code: Optional[str] = Field(None, min_length=6, max_length=6)
 
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
+    requires_2fa: Optional[bool] = None
 
 class RefreshRequest(BaseModel):
     refresh_token: str
@@ -54,6 +56,7 @@ class LogoutRequest(BaseModel):
 class UserResponse(BaseModel):
     username: str
     role: str
+    two_fa_enabled: bool = False
 
 
 # ─── Password Hashing ────────────────────────────────────────────
@@ -79,18 +82,42 @@ def init_default_user():
             "username": "admin",
             "password_hash": _hash_password(admin_password),
             "role": "admin",
+            "2fa_enabled": False,
+            "2fa_secret": None,
         }
         logger.info("Default admin user created (username: admin)")
 
 
-def authenticate_user(username: str, password: str) -> Optional[dict]:
-    """Authenticate a user and return user data if valid."""
+def authenticate_user(username: str, password: str, totp_code: Optional[str] = None) -> Optional[dict]:
+    """
+    Authenticate a user and return user data if valid.
+    If 2FA is enabled, returns requires_2fa=True if no TOTP code provided.
+    """
     user = _users_db.get(username)
     if not user:
         return None
     if not _verify_password(password, user["password_hash"]):
         return None
-    return {"username": user["username"], "role": user["role"]}
+
+    # Check if 2FA is enabled
+    if user.get("2fa_enabled") and user.get("2fa_secret"):
+        if not totp_code:
+            # Return partial result indicating 2FA is required
+            return {
+                "username": user["username"],
+                "role": user["role"],
+                "requires_2fa": True,
+            }
+        # Verify TOTP code
+        from app.infrastructure.account_service import verify_totp_code
+        if not verify_totp_code(user["2fa_secret"], totp_code):
+            return None
+
+    return {
+        "username": user["username"],
+        "role": user["role"],
+        "two_fa_enabled": user.get("2fa_enabled", False),
+    }
 
 
 def register_user(username: str, password: str, role: str = "user") -> Optional[dict]:
@@ -101,9 +128,67 @@ def register_user(username: str, password: str, role: str = "user") -> Optional[
         "username": username,
         "password_hash": _hash_password(password),
         "role": role,
+        "2fa_enabled": False,
+        "2fa_secret": None,
     }
     logger.info("User registered: %s (role: %s)", username, role)
     return {"username": username, "role": role}
+
+
+def change_password(username: str, current_password: str, new_password: str) -> bool:
+    """Change a user's password. Returns True on success."""
+    user = _users_db.get(username)
+    if not user:
+        return False
+    if not _verify_password(current_password, user["password_hash"]):
+        return False
+    user["password_hash"] = _hash_password(new_password)
+    logger.info("Password changed for user: %s", username)
+    return True
+
+
+def set_user_2fa_secret(username: str, secret: str) -> bool:
+    """Store a 2FA secret for a user (during setup, before enabling)."""
+    user = _users_db.get(username)
+    if not user:
+        return False
+    user["2fa_secret"] = secret
+    logger.info("2FA secret set for user: %s", username)
+    return True
+
+
+def enable_2fa(username: str) -> bool:
+    """Enable 2FA for a user (must have secret set first)."""
+    user = _users_db.get(username)
+    if not user:
+        return False
+    if not user.get("2fa_secret"):
+        return False
+    user["2fa_enabled"] = True
+    logger.info("2FA enabled for user: %s", username)
+    return True
+
+
+def disable_2fa(username: str) -> bool:
+    """Disable 2FA for a user and clear the secret."""
+    user = _users_db.get(username)
+    if not user:
+        return False
+    user["2fa_enabled"] = False
+    user["2fa_secret"] = None
+    logger.info("2FA disabled for user: %s", username)
+    return True
+
+
+def get_user_2fa_info(username: str) -> Optional[dict]:
+    """Get 2FA info for a user."""
+    user = _users_db.get(username)
+    if not user:
+        return None
+    return {
+        "enabled": user.get("2fa_enabled", False),
+        "has_secret": bool(user.get("2fa_secret")),
+    }
 
 
 # ─── JWT Token Operations ────────────────────────────────────────

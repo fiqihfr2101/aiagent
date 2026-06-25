@@ -4,8 +4,9 @@ websockets
 chromadb
 python-multipart
 temporalio
-git+https://github.com/NousResearch/hermes-agent.git
 python-dotenv
 httpx
 redis
 PyJWT
+pyotp
+qrcode[pil]

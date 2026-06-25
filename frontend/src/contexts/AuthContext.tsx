@@ -7,16 +7,18 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 interface User {
   username: string;
   role: string;
+  two_fa_enabled?: boolean;
 }
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, totpCode?: string) => Promise<{ requires_2fa?: boolean }>;
   logout: () => Promise<void>;
   error: string | null;
   clearError: () => void;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -88,6 +90,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [getRefreshToken, clearTokens, storeTokens]);
 
+  const refreshUser = useCallback(async () => {
+    const token = getAccessToken();
+    if (token) {
+      const u = await fetchUser(token);
+      if (u) setUser(u);
+    }
+  }, [getAccessToken, fetchUser]);
+
   // Schedule token refresh before expiry
   const scheduleRefresh = useCallback((expiresIn: number) => {
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
@@ -148,7 +158,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [getAccessToken, fetchUser, refreshToken, clearTokens, scheduleRefresh]);
 
-  const login = useCallback(async (username: string, password: string) => {
+  const login = useCallback(async (username: string, password: string, totpCode?: string): Promise<{ requires_2fa?: boolean }> => {
     setError(null);
     setIsLoading(true);
 
@@ -156,7 +166,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, totp_code: totpCode || null }),
       });
 
       if (!res.ok) {
@@ -168,6 +178,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const data = await res.json();
+
+      // Check if 2FA is required
+      if (data.requires_2fa) {
+        setIsLoading(false);
+        return { requires_2fa: true };
+      }
+
       storeTokens(data.access_token, data.refresh_token);
 
       const u = await fetchUser(data.access_token);
@@ -176,6 +193,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         scheduleRefresh(data.expires_in || 30 * 60);
       }
       setIsLoading(false);
+      return {};
     } catch (err) {
       setIsLoading(false);
       throw err;
@@ -214,6 +232,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         logout,
         error,
         clearError,
+        refreshUser,
       }}
     >
       {children}

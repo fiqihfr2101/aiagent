@@ -310,6 +310,12 @@ class LoginRequest(BaseModel):
         max_length=128,
         description="Password",
     )
+    totp_code: Optional[str] = Field(
+        None,
+        min_length=6,
+        max_length=6,
+        description="2FA TOTP code (required if 2FA is enabled)",
+    )
 
     @field_validator("username")
     @classmethod
@@ -328,6 +334,27 @@ class RefreshRequest(BaseModel):
         max_length=2000,
         description="JWT refresh token",
     )
+
+
+class PasswordChangeRequest(BaseModel):
+    """Schema for password change request."""
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class TwoFASetupRequest(BaseModel):
+    """Schema for 2FA setup request."""
+    password: str = Field(..., min_length=1, max_length=128, description="Current password for verification")
+
+
+class TwoFAVerifyRequest(BaseModel):
+    """Schema for 2FA verification request."""
+    code: str = Field(..., min_length=6, max_length=6, description="6-digit TOTP code")
+
+
+class TwoFADisableRequest(BaseModel):
+    """Schema for 2FA disable request."""
+    password: str = Field(..., min_length=1, max_length=128, description="Current password for verification")
 
 
 # ─── Notification Schemas ───────────────────────────────────────
