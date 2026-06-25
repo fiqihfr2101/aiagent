@@ -90,10 +90,14 @@ class AgentCreate(BaseModel):
         json_schema_extra={"examples": ["Research Agent"]},
     )
     role: str = Field(
-        ...,
-        min_length=1,
+        default="",
         max_length=500,
-        description="Agent role description",
+        description="Agent role description (auto-filled from role_id if provided)",
+    )
+    role_id: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Predefined role ID for auto-assigning skills and config",
     )
     model: str = Field(
         default="claude-sonnet-4",
@@ -115,10 +119,15 @@ class AgentCreate(BaseModel):
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
+        return sanitize_plain(v) if v else ""
+
+    @field_validator("role_id")
+    @classmethod
+    def validate_role_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
         v = sanitize_plain(v)
-        if not v:
-            raise ValueError("Role cannot be empty or only whitespace")
-        return v
+        return v if v else None
 
     @field_validator("model")
     @classmethod
@@ -127,6 +136,13 @@ class AgentCreate(BaseModel):
         if not MODEL_PATTERN.match(v):
             raise ValueError("Model contains invalid characters")
         return v
+
+    @model_validator(mode="after")
+    def validate_role_or_role_id(self):
+        """Require either role or role_id."""
+        if not self.role and not self.role_id:
+            raise ValueError("Either 'role' or 'role_id' must be provided")
+        return self
 
 
 class AgentUpdate(BaseModel):

@@ -80,7 +80,15 @@ const AgentCard: React.FC<AgentCardProps> = memo(({ agent, onClick, onEdit, onDe
         <div className="font-bold text-sm tracking-[0.05em] leading-none">
           {agent.status === 'sleeping' ? '🌙 ' : ''}{agent.name}
         </div>
-        <div className="text-[9px] text-txt2 uppercase tracking-[0.08em] mt-[3px]">{agent.role}</div>
+        <div className="flex items-center gap-1.5 mt-[3px]">
+          {agent.role_color && (
+            <span
+              className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+              style={{ backgroundColor: agent.role_color }}
+            />
+          )}
+          <span className="text-[9px] text-txt2 uppercase tracking-[0.08em]">{agent.role}</span>
+        </div>
         <div className="text-[9px] text-txt2 mt-[9px] whitespace-nowrap overflow-hidden text-ellipsis font-mono py-[5px] px-2 bg-[rgba(0,0,0,0.35)] rounded-[5px] border border-[rgba(0,212,170,0.1)]">
           {agent.task}
         </div>

@@ -4,6 +4,9 @@ export interface Agent {
   id: string;
   name: string;
   role: string;
+  role_id?: string;
+  role_color?: string;
+  role_icon?: string;
   model?: string;
   status: AgentStatus;
   task: string;
@@ -153,4 +156,18 @@ export interface MemoryStats {
   by_type: Record<string, number>;
   avg_importance: number;
   total_accesses: number;
+}
+
+// ─── Role Types ─────────────────────────────────────────────────
+
+export interface Role {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  icon: string;
+  tools: string[];
+  toolsets: string[];
+  system_prompt: string;
+  env_vars: Record<string, string>;
 }

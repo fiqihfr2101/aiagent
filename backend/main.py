@@ -49,6 +49,7 @@ from app.interfaces.config_schemas import (
     TemplateCreate, TemplateApply, TemplateFromAgent,
     EnvVarSet,
 )
+from app.interfaces.roles import get_all_roles, get_role_by_id
 
 # ─── Input Sanitization Helpers ─────────────────────────────────
 def _sanitize_string(value: str) -> str:
@@ -444,13 +445,46 @@ async def cache_status():
 
 @app.post("/agents")
 async def create_agent(agent_data: AgentCreate):
-    """Register a new agent."""
-    agent = await hermes.register_agent(agent_data.name, agent_data.role, agent_data.model)
+    """Register a new agent with optional role-based auto-assignment."""
+    role = agent_data.role
+    role_config = None
+
+    # If role_id provided, look up the predefined role and auto-assign config
+    if agent_data.role_id:
+        role_config = get_role_by_id(agent_data.role_id)
+        if not role_config:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown role_id: {agent_data.role_id}",
+            )
+        # Use the role name as the agent's role if not explicitly provided
+        role = role or role_config["name"]
+
+    # Ensure role is not empty
+    if not role:
+        raise HTTPException(status_code=400, detail="Role is required")
+
+    agent = await hermes.register_agent(agent_data.name, role, agent_data.model)
+
+    # Auto-save config from role if available
+    if role_config and agent.get("id"):
+        config_repo.save_config(agent["id"], {
+            "model": agent_data.model,
+            "system_prompt": role_config.get("system_prompt", ""),
+            "tools": role_config.get("tools", []),
+            "toolsets": role_config.get("toolsets", []),
+            "env_vars": role_config.get("env_vars", {}),
+        })
+        # Attach role metadata to the response
+        agent["role_id"] = role_config["id"]
+        agent["role_color"] = role_config.get("color", "#6B7280")
+        agent["role_icon"] = role_config.get("icon", "")
+
     # Create notification for new agent
     await _emit_notification(
         "agent_registered",
         f"New Agent: {agent_data.name}",
-        f"Role: {agent_data.role} · Model: {agent_data.model}",
+        f"Role: {role} · Model: {agent_data.model}",
         {"agent_id": agent.get("id"), "name": agent_data.name, "model": agent_data.model},
     )
     # Invalidate agent cache on creation
@@ -536,6 +570,11 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
     # Invalidate agent cache on model update
     await cache.invalidate_agents()
     return updated
+
+@app.get("/roles")
+async def list_roles():
+    """List all available roles with their default configurations."""
+    return get_all_roles()
 
 @app.get("/models")
 async def list_models():
