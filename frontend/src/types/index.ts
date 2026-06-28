@@ -12,7 +12,7 @@ export interface Agent {
   task: string;
   seen: string;
   uptime: string;
-  hb: string;
+  hb?: string;
   color: string;
 }
 

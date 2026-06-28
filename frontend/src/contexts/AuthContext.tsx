@@ -1,8 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { API_BASE } from '../utils/api';
 
 interface User {
   username: string;
@@ -51,176 +50,127 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('refresh_token');
   }, []);
 
-  const fetchUser = useCallback(async (token: string): Promise<User | null> => {
-    try {
-      const res = await fetch(`${API_BASE}/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return null;
-      return await res.json();
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const refreshToken = useCallback(async (): Promise<boolean> => {
-    const rt = getRefreshToken();
-    if (!rt) return false;
-
-    try {
-      const res = await fetch(`${API_BASE}/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: rt }),
-      });
-
-      if (!res.ok) {
-        clearTokens();
-        setUser(null);
-        return false;
-      }
-
-      const data = await res.json();
-      storeTokens(data.access_token, data.refresh_token);
-      return true;
-    } catch {
-      clearTokens();
-      setUser(null);
-      return false;
-    }
-  }, [getRefreshToken, clearTokens, storeTokens]);
-
   const refreshUser = useCallback(async () => {
     const token = getAccessToken();
-    if (token) {
-      const u = await fetchUser(token);
-      if (u) setUser(u);
+    if (!token) {
+      setUser(null);
+      setIsLoading(false);
+      return;
     }
-  }, [getAccessToken, fetchUser]);
 
-  // Schedule token refresh before expiry
-  const scheduleRefresh = useCallback((expiresIn: number) => {
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    // Refresh 60 seconds before expiry
-    const refreshTime = Math.max((expiresIn - 60) * 1000, 10000);
-    refreshTimerRef.current = setTimeout(async () => {
-      const success = await refreshToken();
-      if (success) {
-        // Re-fetch user and re-schedule
-        const token = getAccessToken();
-        if (token) {
-          const u = await fetchUser(token);
-          if (u) {
-            setUser(u);
-            scheduleRefresh(30 * 60); // Default 30 min
-          }
-        }
-      }
-    }, refreshTime);
-  }, [refreshToken, getAccessToken, fetchUser]);
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`, {
+        headers: { 'Authorization': 'Bearer ' + token },
+      });
 
-  // Check authentication on mount
-  useEffect(() => {
-    const checkAuth = async () => {
-      const token = getAccessToken();
-      if (!token) {
-        setIsLoading(false);
-        return;
-      }
-
-      const u = await fetchUser(token);
-      if (u) {
-        setUser(u);
-        scheduleRefresh(30 * 60); // Default 30 min
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data);
       } else {
-        // Try refresh
-        const success = await refreshToken();
-        if (success) {
-          const newToken = getAccessToken();
-          if (newToken) {
-            const newUser = await fetchUser(newToken);
-            if (newUser) {
-              setUser(newUser);
-              scheduleRefresh(30 * 60);
+        // Token expired, try to refresh
+        const refreshToken = getRefreshToken();
+        if (refreshToken) {
+          const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken }),
+          });
+
+          if (refreshRes.ok) {
+            const refreshData = await refreshRes.json();
+            storeTokens(refreshData.access_token, refreshData.refresh_token);
+            // Retry with new token
+            const retryRes = await fetch(`${API_BASE}/auth/me`, {
+              headers: { 'Authorization': 'Bearer ' + refreshData.access_token },
+            });
+            if (retryRes.ok) {
+              const retryData = await retryRes.json();
+              setUser(retryData);
+            } else {
+              clearTokens();
+              setUser(null);
             }
+          } else {
+            clearTokens();
+            setUser(null);
           }
         } else {
           clearTokens();
+          setUser(null);
         }
       }
+    } catch (err) {
+      console.error('Failed to refresh user:', err);
+      setUser(null);
+    } finally {
       setIsLoading(false);
-    };
+    }
+  }, [getAccessToken, getRefreshToken, storeTokens, clearTokens]);
 
-    checkAuth();
-
-    return () => {
-      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    };
-  }, [getAccessToken, fetchUser, refreshToken, clearTokens, scheduleRefresh]);
-
-  const login = useCallback(async (username: string, password: string, totpCode?: string): Promise<{ requires_2fa?: boolean }> => {
+  const login = useCallback(async (username: string, password: string, totpCode?: string) => {
     setError(null);
-    setIsLoading(true);
-
     try {
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, totp_code: totpCode || null }),
+        body: JSON.stringify({ username, password, totp_code: totpCode }),
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        const detail = typeof data.detail === 'string' ? data.detail : 'Login failed';
-        setError(detail);
-        setIsLoading(false);
-        throw new Error(detail);
+        throw new Error(data.detail || 'Login failed');
       }
 
       const data = await res.json();
 
-      // Check if 2FA is required
       if (data.requires_2fa) {
-        setIsLoading(false);
         return { requires_2fa: true };
       }
 
       storeTokens(data.access_token, data.refresh_token);
-
-      const u = await fetchUser(data.access_token);
-      if (u) {
-        setUser(u);
-        scheduleRefresh(data.expires_in || 30 * 60);
-      }
-      setIsLoading(false);
+      await refreshUser();
       return {};
     } catch (err) {
-      setIsLoading(false);
+      setError(err instanceof Error ? err.message : 'Login failed');
       throw err;
     }
-  }, [storeTokens, fetchUser, scheduleRefresh]);
+  }, [storeTokens, refreshUser]);
 
   const logout = useCallback(async () => {
-    const refreshTokenVal = getRefreshToken();
-    const accessTokenVal = getAccessToken();
-
-    try {
-      await fetch(`${API_BASE}/auth/logout`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(accessTokenVal ? { Authorization: `Bearer ${accessTokenVal}` } : {}),
-        },
-        body: JSON.stringify({ refresh_token: refreshTokenVal }),
-      });
-    } catch {
-      // Ignore logout errors
+    const token = getAccessToken();
+    if (token) {
+      try {
+        await fetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token },
+        });
+      } catch (err) {
+        // Ignore logout errors
+      }
     }
-
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     clearTokens();
     setUser(null);
-  }, [getRefreshToken, getAccessToken, clearTokens]);
+  }, [getAccessToken, clearTokens]);
+
+  useEffect(() => {
+    refreshUser();
+  }, [refreshUser]);
+
+  // Auto-refresh token before expiry
+  useEffect(() => {
+    if (user && getAccessToken()) {
+      // Refresh every 14 minutes (token expires in 15 minutes)
+      refreshTimerRef.current = setInterval(() => {
+        refreshUser();
+      }, 14 * 60 * 1000);
+
+      return () => {
+        if (refreshTimerRef.current) {
+          clearInterval(refreshTimerRef.current);
+        }
+      };
+    }
+  }, [user, getAccessToken, refreshUser]);
 
   return (
     <AuthContext.Provider
@@ -248,39 +198,124 @@ export function useAuth() {
   return context;
 }
 
-/**
- * Higher-order component for protecting routes.
- * Redirects to login if not authenticated.
- */
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
-  const [showLogin, setShowLogin] = useState(false);
-
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      setShowLogin(true);
-    }
-    if (isAuthenticated) {
-      setShowLogin(false);
-    }
-  }, [isAuthenticated, isLoading]);
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-[#0B0F1A]">
         <div className="flex flex-col items-center gap-4">
           <div className="w-10 h-10 border-2 border-cyan-400/30 border-t-cyan-400 rounded-full animate-spin" />
-          <span className="text-sm text-gray-400 font-mono">Initializing H.E.R.M.E.S...</span>
+          <span className="text-sm text-gray-300 font-mono">Loading...</span>
         </div>
       </div>
     );
   }
 
-  if (showLogin && !isAuthenticated) {
-    // Dynamic import to avoid circular deps
-    const LoginForm = require('@/components/LoginForm').default;
-    return <LoginForm onLoginSuccess={() => setShowLogin(false)} />;
+  if (!isAuthenticated) {
+    return <LoginForm />;
   }
 
   return <>{children}</>;
+}
+
+function LoginForm() {
+  const { login, error, clearError } = useAuth();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
+  const [requires2fa, setRequires2fa] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const result = await login(username, password, requires2fa ? totpCode : undefined);
+      if (result.requires_2fa) {
+        setRequires2fa(true);
+      }
+    } catch (err) {
+      // Error is handled by AuthContext
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-center h-screen bg-[#0B0F1A]">
+      <div className="w-full max-w-md p-8">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-white mb-2">H.E.R.M.E.S.</h1>
+          <p className="text-gray-300 text-sm">AI Agent Orchestrator</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-300 mb-1">Username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-cyan-500 focus:outline-none"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-300 mb-1">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-cyan-500 focus:outline-none"
+              required
+            />
+          </div>
+
+          {requires2fa && (
+            <div>
+              <label className="block text-sm text-gray-300 mb-1">2FA Code</label>
+              <input
+                type="text"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white text-center text-2xl tracking-widest focus:border-cyan-500 focus:outline-none"
+                placeholder="000000"
+                maxLength={6}
+                inputMode="numeric"
+                required
+              />
+            </div>
+          )}
+
+          {error && (
+            <div className="text-red-400 text-sm text-center">{error}</div>
+          )}
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full bg-cyan-600 hover:bg-cyan-700 text-white py-2 rounded-lg disabled:opacity-50"
+          >
+            {isSubmitting ? 'Signing in...' : requires2fa ? 'Verify' : 'Sign In'}
+          </button>
+
+          {requires2fa && (
+            <button
+              type="button"
+              onClick={() => {
+                setRequires2fa(false);
+                setTotpCode('');
+                clearError();
+              }}
+              className="w-full text-gray-300 hover:text-white text-sm"
+            >
+              Back to login
+            </button>
+          )}
+        </form>
+      </div>
+    </div>
+  );
 }

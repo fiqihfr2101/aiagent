@@ -80,7 +80,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
           <h1 className="text-3xl font-bold tracking-[0.08em] text-white mb-2">
             H.E.R.M.E.S.
           </h1>
-          <p className="text-sm text-gray-400 font-mono tracking-wider">
+          <p className="text-sm text-gray-300 font-mono tracking-wider">
             AI Agent Orchestrator — Mission Control
           </p>
         </div>
@@ -120,7 +120,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
             {!requires2FA && (
               <>
                 <div>
-                  <label htmlFor="username" className="block text-xs font-mono text-gray-400 uppercase tracking-wider mb-2">
+                  <label htmlFor="username" className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
                     Username
                   </label>
                   <input
@@ -131,13 +131,13 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
                     placeholder="admin"
                     autoComplete="username"
                     disabled={isSubmitting}
-                    className="w-full px-4 py-3 bg-[#0D1117] border border-gray-600/50 rounded-lg text-white text-sm font-mono placeholder-gray-500 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 transition-colors disabled:opacity-50"
+                    className="w-full px-4 py-3 bg-[#0D1117] border border-gray-600/50 rounded-lg text-white text-sm font-mono placeholder-gray-400 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 transition-colors disabled:opacity-50"
                   />
                 </div>
 
                 {/* Password */}
                 <div>
-                  <label htmlFor="password" className="block text-xs font-mono text-gray-400 uppercase tracking-wider mb-2">
+                  <label htmlFor="password" className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
                     Password
                   </label>
                   <div className="relative">
@@ -149,12 +149,12 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
                       placeholder="••••••••"
                       autoComplete="current-password"
                       disabled={isSubmitting}
-                      className="w-full px-4 py-3 pr-12 bg-[#0D1117] border border-gray-600/50 rounded-lg text-white text-sm font-mono placeholder-gray-500 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 transition-colors disabled:opacity-50"
+                      className="w-full px-4 py-3 pr-12 bg-[#0D1117] border border-gray-600/50 rounded-lg text-white text-sm font-mono placeholder-gray-400 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 transition-colors disabled:opacity-50"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-200 transition-colors"
                       tabIndex={-1}
                     >
                       {showPassword ? (
@@ -176,7 +176,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
             {/* 2FA Code */}
             {requires2FA && (
               <div>
-                <label htmlFor="totpCode" className="block text-xs font-mono text-gray-400 uppercase tracking-wider mb-2">
+                <label htmlFor="totpCode" className="block text-xs font-mono text-gray-300 uppercase tracking-wider mb-2">
                   2FA Code
                 </label>
                 <input
@@ -194,7 +194,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
                   autoComplete="one-time-code"
                   autoFocus
                   disabled={isSubmitting}
-                  className="w-full px-4 py-3 bg-[#0D1117] border border-gray-600/50 rounded-lg text-white text-lg font-mono tracking-[0.5em] text-center placeholder-gray-500 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 transition-colors disabled:opacity-50"
+                  className="w-full px-4 py-3 bg-[#0D1117] border border-gray-600/50 rounded-lg text-white text-lg font-mono tracking-[0.5em] text-center placeholder-gray-400 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 transition-colors disabled:opacity-50"
                 />
               </div>
             )}
@@ -230,7 +230,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
             <div className="mt-4">
               <button
                 onClick={handleBackToLogin}
-                className="w-full py-2 text-xs text-gray-400 hover:text-gray-300 font-mono transition-colors"
+                className="w-full py-2 text-xs text-gray-300 hover:text-gray-200 font-mono transition-colors"
               >
                 ← Back to login
               </button>
@@ -240,7 +240,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
           {/* Default credentials hint */}
           {!requires2FA && (
             <div className="mt-6 pt-4 border-t border-gray-700/50">
-              <p className="text-[10px] text-gray-500 font-mono text-center">
+              <p className="text-[10px] text-gray-300 font-mono text-center">
                 Default credentials: admin / hermes-admin-2024
               </p>
             </div>
@@ -248,7 +248,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
         </div>
 
         {/* Footer */}
-        <p className="text-center text-[10px] text-gray-600 font-mono mt-6 tracking-wider">
+        <p className="text-center text-[10px] text-gray-300 font-mono mt-6 tracking-wider">
           H.E.R.M.E.S. v1.0 — Secure Access
         </p>
       </div>

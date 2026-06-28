@@ -134,7 +134,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose, action
           {flatActions.length === 0 ? (
             <div className="px-4 py-8 text-center">
               <div className="text-txt3 text-[11px] font-mono">No results found</div>
-              <div className="text-txt3/60 text-[10px] mt-1">Try a different search term</div>
+              <div className="text-txt2 text-[10px] mt-1">Try a different search term</div>
             </div>
           ) : (
             Object.entries(groupedActions).map(([category, categoryActions]) => (

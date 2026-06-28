@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Agent } from '@/types';
@@ -26,7 +27,6 @@ interface MessageCenterProps {
   lastAgentMessage?: any;
 }
 
-const API_BASE = 'http://localhost:8000';
 
 export default function MessageCenter({ agents, lastAgentMessage }: MessageCenterProps) {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -442,7 +442,7 @@ export default function MessageCenter({ agents, lastAgentMessage }: MessageCente
                     value={sendSubject}
                     onChange={(e) => setSendSubject(e.target.value)}
                     placeholder="Message subject..."
-                    className="w-full bg-bg3 border border-border-custom rounded px-2.5 py-1.5 text-[11px] text-txt font-mono focus:border-cyan-custom/50 focus:outline-none placeholder:text-txt3/50"
+                    className="w-full bg-bg3 border border-border-custom rounded px-2.5 py-1.5 text-[11px] text-txt font-mono focus:border-cyan-custom/50 focus:outline-none placeholder:text-txt3"
                   />
                 </div>
 
@@ -453,7 +453,7 @@ export default function MessageCenter({ agents, lastAgentMessage }: MessageCente
                     onChange={(e) => setSendBody(e.target.value)}
                     placeholder="Message content..."
                     rows={5}
-                    className="w-full bg-bg3 border border-border-custom rounded px-2.5 py-1.5 text-[11px] text-txt font-mono focus:border-cyan-custom/50 focus:outline-none resize-none placeholder:text-txt3/50"
+                    className="w-full bg-bg3 border border-border-custom rounded px-2.5 py-1.5 text-[11px] text-txt font-mono focus:border-cyan-custom/50 focus:outline-none resize-none placeholder:text-txt3"
                   />
                 </div>
 

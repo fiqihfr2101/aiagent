@@ -10,3 +10,4 @@ redis
 PyJWT
 pyotp
 qrcode[pil]
+psycopg2-binary>=2.9.9,<3

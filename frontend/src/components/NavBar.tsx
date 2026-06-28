@@ -120,7 +120,7 @@ const NavBar: React.FC<NavBarProps> = memo(({ activeL1, setActiveL1, systemStatu
             <div className="absolute right-0 top-full mt-2 w-52 bg-[#111827] border border-gray-700/50 rounded-xl shadow-2xl py-1 z-[60] animate-fadein">
               <div className="px-4 py-2.5 border-b border-gray-700/50">
                 <div className="text-sm text-white font-medium">{user?.username}</div>
-                <div className="text-[10px] text-gray-400 font-mono capitalize">{user?.role}</div>
+                <div className="text-[10px] text-gray-300 font-mono capitalize">{user?.role}</div>
               </div>
               <a
                 href="/settings"

@@ -19,7 +19,8 @@ const getStatusColor = (status: string) => {
   }
 };
 
-const getHbClass = (hb: string) => {
+const getHbClass = (hb?: string) => {
+  if (!hb) return 'text-txt3';
   if (hb.includes('m')) return 'text-red-custom';
   return parseInt(hb) > 30 ? 'text-amb-custom' : 'text-cyan-custom';
 };

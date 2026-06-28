@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { useState, useEffect, useCallback } from 'react';
 
@@ -21,7 +22,7 @@ interface MarketplaceProps {
   onInstall?: (pluginId: string) => void;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || API_BASE;
 
 const categoryIcons: Record<string, string> = {
   search: '🔍',

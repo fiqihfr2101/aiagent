@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { memo, useState, useEffect } from 'react';
 import { Agent } from '../types';
@@ -25,7 +26,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, age
   const [activeTab, setActiveTab] = useState<TabKey>('details');
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
-  const [model, setModel] = useState('claude-sonnet-4');
+  const [model, setModel] = useState('minimax-m3');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -33,16 +34,39 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, age
   // Fetch available models from backend
   useEffect(() => {
     if (isOpen) {
-      fetch('http://localhost:8000/models')
+      fetch(API_BASE + '/models')
         .then(res => res.json())
         .then((data: ModelInfo[]) => setModels(data))
         .catch(() => {
-          // Fallback models if fetch fails
+          // Fallback models if fetch fails (OpenCode Go models)
           setModels([
-            { id: 'gpt-4o', name: 'gpt-4o', family: 'gpt', rates: { input: 0.005, output: 0.015 } },
-            { id: 'claude-sonnet-4', name: 'claude-sonnet-4', family: 'claude', rates: { input: 0.003, output: 0.015 } },
-            { id: 'claude-opus-4', name: 'claude-opus-4', family: 'claude', rates: { input: 0.015, output: 0.075 } },
-            { id: 'kimi-k2', name: 'kimi-k2', family: 'kimi', rates: { input: 0.003, output: 0.015 } },
+            // MiniMax
+            { id: 'minimax-m3', name: 'minimax-m3', family: 'minimax', rates: { input: 0.003, output: 0.015 } },
+            { id: 'minimax-m2.7', name: 'minimax-m2.7', family: 'minimax', rates: { input: 0.003, output: 0.015 } },
+            { id: 'minimax-m2.5', name: 'minimax-m2.5', family: 'minimax', rates: { input: 0.003, output: 0.015 } },
+            // Kimi
+            { id: 'kimi-k2.7-code', name: 'kimi-k2.7-code', family: 'kimi', rates: { input: 0.003, output: 0.015 } },
+            { id: 'kimi-k2.6', name: 'kimi-k2.6', family: 'kimi', rates: { input: 0.003, output: 0.015 } },
+            { id: 'kimi-k2.5', name: 'kimi-k2.5', family: 'kimi', rates: { input: 0.003, output: 0.015 } },
+            // GLM
+            { id: 'glm-5.2', name: 'glm-5.2', family: 'glm', rates: { input: 0.003, output: 0.015 } },
+            { id: 'glm-5.1', name: 'glm-5.1', family: 'glm', rates: { input: 0.003, output: 0.015 } },
+            { id: 'glm-5', name: 'glm-5', family: 'glm', rates: { input: 0.003, output: 0.015 } },
+            // DeepSeek
+            { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro', family: 'deepseek', rates: { input: 0.003, output: 0.015 } },
+            { id: 'deepseek-v4-flash', name: 'deepseek-v4-flash', family: 'deepseek', rates: { input: 0.003, output: 0.015 } },
+            // Qwen
+            { id: 'qwen3.7-max', name: 'qwen3.7-max', family: 'qwen', rates: { input: 0.003, output: 0.015 } },
+            { id: 'qwen3.7-plus', name: 'qwen3.7-plus', family: 'qwen', rates: { input: 0.003, output: 0.015 } },
+            { id: 'qwen3.6-plus', name: 'qwen3.6-plus', family: 'qwen', rates: { input: 0.003, output: 0.015 } },
+            { id: 'qwen3.5-plus', name: 'qwen3.5-plus', family: 'qwen', rates: { input: 0.003, output: 0.015 } },
+            // Mimo
+            { id: 'mimo-v2-pro', name: 'mimo-v2-pro', family: 'mimo', rates: { input: 0.003, output: 0.015 } },
+            { id: 'mimo-v2-omni', name: 'mimo-v2-omni', family: 'mimo', rates: { input: 0.003, output: 0.015 } },
+            { id: 'mimo-v2.5-pro', name: 'mimo-v2.5-pro', family: 'mimo', rates: { input: 0.003, output: 0.015 } },
+            { id: 'mimo-v2.5', name: 'mimo-v2.5', family: 'mimo', rates: { input: 0.003, output: 0.015 } },
+            // Other
+            { id: 'hy3-preview', name: 'hy3-preview', family: 'other', rates: { input: 0.003, output: 0.015 } },
           ]);
         });
     }
@@ -52,7 +76,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, age
     if (agent) {
       setName(agent.name);
       setRole(agent.role);
-      setModel(agent.model || 'claude-sonnet-4');
+      setModel(agent.model || 'minimax-m3');
       setActiveTab('details');
       setError('');
     }
@@ -80,7 +104,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, age
     setError('');
 
     try {
-      const res = await fetch(`http://localhost:8000/agents/${agent.id}`, {
+      const res = await fetch(`${API_BASE}/agents/${agent.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim(), role: role.trim(), model }),
@@ -157,7 +181,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, age
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3/50 focus:outline-none focus:border-cyan-custom/50 transition-colors"
+                  className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3 focus:outline-none focus:border-cyan-custom/50 transition-colors"
                 />
               </div>
 
@@ -167,7 +191,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, age
                   type="text"
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
-                  className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3/50 focus:outline-none focus:border-cyan-custom/50 transition-colors"
+                  className="w-full bg-bg3 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3 focus:outline-none focus:border-cyan-custom/50 transition-colors"
                 />
               </div>
 
@@ -220,7 +244,6 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, age
             <AgentConfig
               agentId={agent.id}
               agentName={agent.name}
-              agents={agents}
             />
           )}
         </div>

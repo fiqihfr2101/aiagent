@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { memo, useState, useEffect, useCallback, useMemo } from 'react';
 import { DispatchTask, TaskHistoryResponse, TaskStatus, Agent, TaskLog } from '@/types';
@@ -51,7 +52,7 @@ const TaskHistory: React.FC<TaskHistoryProps> = memo(({ agents }) => {
       if (filterAgent) params.set('agent_id', filterAgent);
       if (filterStatus) params.set('status', filterStatus);
 
-      const res = await fetch(`http://localhost:8000/tasks/history?${params}`);
+      const res = await fetch(`${API_BASE}/tasks/history?${params}`);
       if (res.ok) {
         const data: TaskHistoryResponse = await res.json();
         setTasks(data.tasks);
@@ -112,7 +113,7 @@ const TaskHistory: React.FC<TaskHistoryProps> = memo(({ agents }) => {
     if (!taskLogs[taskId]) {
       setLoadingLogs(taskId);
       try {
-        const res = await fetch(`http://localhost:8000/tasks/${taskId}/logs`);
+        const res = await fetch(`${API_BASE}/tasks/${taskId}/logs`);
         if (res.ok) {
           const data = await res.json();
           setTaskLogs((prev) => ({ ...prev, [taskId]: data }));
@@ -129,7 +130,7 @@ const TaskHistory: React.FC<TaskHistoryProps> = memo(({ agents }) => {
     if (!confirm(`Stop task "${taskTitle}"?\n\nThis will immediately halt execution.`)) return;
     setStoppingTaskId(taskId);
     try {
-      const res = await fetch(`http://localhost:8000/tasks/${taskId}/stop`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/tasks/${taskId}/stop`, { method: 'POST' });
       if (res.ok) {
         fetchHistory();
       }

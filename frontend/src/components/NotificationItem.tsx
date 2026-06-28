@@ -66,7 +66,7 @@ const NotificationItemComponent: React.FC<NotificationItemProps> = memo(({ notif
         {description && (
           <div className="text-[10px] text-txt3 mt-0.5 leading-snug line-clamp-2">{description}</div>
         )}
-        <div className="text-[9px] text-txt3/60 mt-1 font-mono">{timeAgo(created_at)}</div>
+        <div className="text-[9px] text-txt2 mt-1 font-mono">{timeAgo(created_at)}</div>
       </div>
       {!read && (
         <div className="flex-shrink-0 mt-1.5">

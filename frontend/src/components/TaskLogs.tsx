@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { memo, useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { TaskLog } from '@/types';
@@ -18,7 +19,7 @@ const levelColors: Record<string, { bg: string; text: string; border: string }> 
   INFO: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/30' },
   WARNING: { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/30' },
   ERROR: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/30' },
-  DEBUG: { bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/30' },
+  DEBUG: { bg: 'bg-gray-500/10', text: 'text-gray-300', border: 'border-gray-500/30' },
 };
 
 const levelIcons: Record<string, string> = {
@@ -57,7 +58,7 @@ const TaskLogs: React.FC<TaskLogsProps> = memo(({
     if (!taskId) return;
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8000/tasks/${taskId}/logs`);
+      const res = await fetch(`${API_BASE}/tasks/${taskId}/logs`);
       if (res.ok) {
         const data = await res.json();
         setLogs(data);

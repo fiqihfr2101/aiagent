@@ -1,3 +1,4 @@
+import { API_BASE } from '../utils/api';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useDebouncedCallback } from './useDebounce';
@@ -181,16 +182,16 @@ export const useWebSocket = (
 
   const fetchTaskCounts = useDebouncedCallback(async () => {
     try {
-      const cached = apiCache.get<TaskCounts>('GET:http://localhost:8000/tasks/counts');
+      const cached = apiCache.get<TaskCounts>('GET:' + API_BASE + '/tasks/counts');
       if (cached) {
         setTaskCounts(cached);
         return;
       }
-      const res = await fetch('http://localhost:8000/tasks/counts');
+      const res = await fetch(API_BASE + '/tasks/counts');
       if (res.ok) {
         const counts = await res.json();
         setTaskCounts(counts);
-        apiCache.set('GET:http://localhost:8000/tasks/counts', counts, 5000);
+        apiCache.set('GET:' + API_BASE + '/tasks/counts', counts, 5000);
       }
     } catch (err) {
       // Silently fail

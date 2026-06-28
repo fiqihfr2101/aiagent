@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { memo, useState, useEffect, useCallback } from 'react';
 import { Agent, TaskPriority } from '@/types';
@@ -49,7 +50,7 @@ const TaskDispatchModal: React.FC<TaskDispatchModalProps> = memo(({ isOpen, onCl
   // Fetch available models
   useEffect(() => {
     if (isOpen) {
-      fetch('http://localhost:8000/models')
+      fetch(API_BASE + '/models')
         .then(res => res.json())
         .then((data: ModelInfo[]) => setModels(data))
         .catch(() => {});
@@ -88,14 +89,14 @@ const TaskDispatchModal: React.FC<TaskDispatchModalProps> = memo(({ isOpen, onCl
     try {
       // If model override is set, update the agent's model first
       if (showModelOverride && overrideModel && overrideModel !== selectedAgent?.model) {
-        await fetch(`http://localhost:8000/agents/${agentId}/model`, {
+        await fetch(`${API_BASE}/agents/${agentId}/model`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ model: overrideModel }),
         });
       }
 
-      const response = await fetch('http://localhost:8000/tasks', {
+      const response = await fetch(API_BASE + '/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

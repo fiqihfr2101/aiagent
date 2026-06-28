@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
@@ -207,8 +208,8 @@ const WorkflowBuilder: React.FC = () => {
 
     try {
       const url = workflowId
-        ? `http://localhost:8000/workflows/${workflowId}`
-        : 'http://localhost:8000/workflows';
+        ? `${API_BASE}/workflows/${workflowId}`
+        : API_BASE + '/workflows';
       const method = workflowId ? 'PUT' : 'POST';
       const res = await fetch(url, {
         method,
@@ -233,7 +234,7 @@ const WorkflowBuilder: React.FC = () => {
   const loadWorkflow = useCallback(
     async (id: string) => {
       try {
-        const res = await fetch(`http://localhost:8000/workflows/${id}`);
+        const res = await fetch(`${API_BASE}/workflows/${id}`);
         if (res.ok) {
           const data = await res.json();
           setNodes(data.nodes || []);
@@ -261,7 +262,7 @@ const WorkflowBuilder: React.FC = () => {
     }
     setExecuting(true);
     try {
-      const res = await fetch(`http://localhost:8000/workflows/${workflowId}/execute`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/workflows/${workflowId}/execute`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         showStatus(`🚀 Execution started: ${data.workflow_id || workflowId}`);

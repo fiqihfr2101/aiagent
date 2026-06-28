@@ -7,9 +7,25 @@ from workflows.agent_workflow import AgentTaskWorkflow
 from activities.agent_activities import AgentActivities
 
 async def main():
-    # Connect to Temporal server
+    # Connect to Temporal server with retry
     temporal_address = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
-    client = await Client.connect(temporal_address)
+    
+    max_retries = 30
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"Connecting to Temporal at {temporal_address} (attempt {attempt + 1}/{max_retries})...")
+            client = await Client.connect(temporal_address)
+            print(f"Connected to Temporal successfully!")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Failed to connect: {e}. Retrying in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+            else:
+                print(f"Failed to connect after {max_retries} attempts: {e}")
+                raise
 
     # Initialize activities
     activities = AgentActivities()

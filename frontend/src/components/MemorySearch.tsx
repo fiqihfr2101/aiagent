@@ -1,3 +1,5 @@
+'use client';
+import { API_BASE } from '../utils/api';
 import React, { useState, useCallback } from 'react';
 import { MemorySearchResult } from '../types';
 
@@ -29,7 +31,7 @@ const MemorySearch: React.FC<MemorySearchProps> = ({ agents, onSelectMemory }) =
     setLoading(true);
     setSearched(true);
     try {
-      const resp = await fetch('http://localhost:8000/memories/search', {
+      const resp = await fetch(API_BASE + '/memories/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

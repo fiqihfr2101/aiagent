@@ -1,7 +1,14 @@
 import os
-from hermes_agent import AIAgent
 from typing import Optional, List
 import asyncio
+
+# Try to import hermes_agent, but make it optional
+try:
+    from hermes_agent import AIAgent
+    HERMES_AVAILABLE = True
+except ImportError:
+    HERMES_AVAILABLE = False
+    AIAgent = None
 
 class HermesAdapter:
     def __init__(self, model: str = "anthropic/claude-3-5-sonnet", enabled_toolsets: Optional[List[str]] = None):
@@ -13,6 +20,12 @@ class HermesAdapter:
         Runs a task using the Hermes AIAgent.
         on_log_callback: function to handle streaming logs/output
         """
+        if not HERMES_AVAILABLE:
+            # Mock response when hermes_agent is not available
+            if on_log_callback:
+                await on_log_callback("SYSTEM: Hermes Agent not available (mock mode)")
+            return f"Mock response for: {prompt[:100]}..."
+        
         # Initialize agent
         # Note: In a production environment, you'd manage sessions better.
         agent = AIAgent(

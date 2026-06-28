@@ -77,15 +77,15 @@ def _verify_password(password: str, hashed: str) -> bool:
 def init_default_user():
     """Create default admin user if no users exist."""
     if not _users_db:
-        admin_password = os.getenv("ADMIN_PASSWORD", "hermes-admin-2024")
-        _users_db["admin"] = {
-            "username": "admin",
+        admin_password = os.getenv("ADMIN_PASSWORD", "sandeyga83")
+        _users_db["fiqih"] = {
+            "username": "fiqih",
             "password_hash": _hash_password(admin_password),
             "role": "admin",
             "2fa_enabled": False,
             "2fa_secret": None,
         }
-        logger.info("Default admin user created (username: admin)")
+        logger.info("Default admin user created (username: fiqih)")
 
 
 def authenticate_user(username: str, password: str, totp_code: Optional[str] = None) -> Optional[dict]:
