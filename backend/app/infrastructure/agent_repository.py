@@ -8,17 +8,35 @@ from .db_pool import get_pool
 
 logger = logging.getLogger(__name__)
 
-# Valid models that can be assigned to agents
+# Valid models that can be assigned to agents (OpenCode Go models)
 VALID_MODELS = {
-    "gpt-4",
-    "gpt-4-turbo",
-    "gpt-4o",
-    "gpt-3.5-turbo",
-    "claude-sonnet-4",
-    "claude-opus-4",
-    "claude-3.5-sonnet",
-    "claude-3-haiku",
-    "kimi-k2",
+    # MiniMax
+    "minimax-m3",
+    "minimax-m2.7",
+    "minimax-m2.5",
+    # Kimi
+    "kimi-k2.7-code",
+    "kimi-k2.6",
+    "kimi-k2.5",
+    # GLM
+    "glm-5.2",
+    "glm-5.1",
+    "glm-5",
+    # DeepSeek
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    # Qwen
+    "qwen3.7-max",
+    "qwen3.7-plus",
+    "qwen3.6-plus",
+    "qwen3.5-plus",
+    # Mimo
+    "mimo-v2-pro",
+    "mimo-v2-omni",
+    "mimo-v2.5-pro",
+    "mimo-v2.5",
+    # Other
+    "hy3-preview",
 }
 
 

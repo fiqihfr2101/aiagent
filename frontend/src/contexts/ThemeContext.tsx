@@ -48,8 +48,8 @@ const darkThemeVars: Record<string, string> = {
   '--grn': '#22C55E',
   '--orn': '#F97316',
   '--txt': '#C8D6F0',
-  '--txt2': '#6B7FA8',
-  '--txt3': '#364560',
+  '--txt2': '#8a9bb5',
+  '--txt3': '#6f829f',
 };
 
 function applyThemeVars(vars: Record<string, string>) {
@@ -92,7 +92,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   // Prevent flash of wrong theme
   if (!mounted) {
-    return <>{children}</>;
+    return (
+      <ThemeContext.Provider value={value}>
+        {children}
+      </ThemeContext.Provider>
+    );
   }
 
   return (

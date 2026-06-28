@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { memo, useState, useEffect } from 'react';
 
@@ -44,7 +45,6 @@ const TemplateManager: React.FC<TemplateManagerProps> = memo(({ agents, onClose 
   const [createFromAgentId, setCreateFromAgentId] = useState('');
   const [createFromAgentName, setCreateFromAgentName] = useState('');
 
-  const API_BASE = 'http://localhost:8000';
 
   // Load templates
   useEffect(() => {
@@ -316,7 +316,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = memo(({ agents, onClose 
             value={createFromAgentName}
             onChange={(e) => setCreateFromAgentName(e.target.value)}
             placeholder="Template name..."
-            className="w-full bg-bg2 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3/50 focus:outline-none focus:border-cyan-custom/50 transition-colors"
+            className="w-full bg-bg2 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3 focus:outline-none focus:border-cyan-custom/50 transition-colors"
           />
           <button
             onClick={handleCreateFromAgent}
@@ -337,14 +337,14 @@ const TemplateManager: React.FC<TemplateManagerProps> = memo(({ agents, onClose 
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Template name"
-            className="w-full bg-bg2 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3/50 focus:outline-none focus:border-cyan-custom/50 transition-colors"
+            className="w-full bg-bg2 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3 focus:outline-none focus:border-cyan-custom/50 transition-colors"
           />
           <input
             type="text"
             value={newDescription}
             onChange={(e) => setNewDescription(e.target.value)}
             placeholder="Description"
-            className="w-full bg-bg2 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3/50 focus:outline-none focus:border-cyan-custom/50 transition-colors"
+            className="w-full bg-bg2 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3 focus:outline-none focus:border-cyan-custom/50 transition-colors"
           />
           <select
             value={newModel}
@@ -361,7 +361,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = memo(({ agents, onClose 
             onChange={(e) => setNewSystemPrompt(e.target.value)}
             placeholder="System prompt..."
             rows={3}
-            className="w-full bg-bg2 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3/50 focus:outline-none focus:border-cyan-custom/50 transition-colors resize-none"
+            className="w-full bg-bg2 border border-border-custom rounded-lg px-3 py-2 text-[12px] text-txt font-mono placeholder:text-txt3 focus:outline-none focus:border-cyan-custom/50 transition-colors resize-none"
           />
           <div>
             <label className="block text-[9px] text-txt3 uppercase tracking-wider mb-1">Temperature: {newTemperature.toFixed(2)}</label>

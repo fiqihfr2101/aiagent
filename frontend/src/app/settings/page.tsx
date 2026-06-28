@@ -19,7 +19,7 @@ export default function SettingsPage() {
         <div className="flex-shrink-0 h-[44px] bg-[rgba(7,9,15,0.95)] border-b border-[rgba(22,35,58,0.8)] flex items-center px-4 gap-4 backdrop-blur-xl">
           <a
             href="/"
-            className="flex items-center gap-2 text-[11px] font-medium text-gray-400 hover:text-cyan-400 transition-colors tracking-wide uppercase"
+            className="flex items-center gap-2 text-[11px] font-medium text-gray-300 hover:text-cyan-400 transition-colors tracking-wide uppercase"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />

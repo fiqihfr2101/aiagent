@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { NODE_PALETTE, type WorkflowNodeData, type WorkflowNodeType } from './WorkflowNodes';
@@ -24,7 +25,7 @@ const WorkflowSidebar: React.FC<WorkflowSidebarProps> = ({ onNodeDragStart, onLo
   const fetchWorkflows = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/workflows');
+      const res = await fetch(API_BASE + '/workflows');
       if (res.ok) {
         const data = await res.json();
         setWorkflows(data.workflows || []);

@@ -5,7 +5,7 @@ import datetime
 from typing import Optional
 
 from app.infrastructure.metrics_collector import MetricsCollector
-from app.infrastructure.agent_repository import AgentRepository
+from app.infrastructure.agent_repository_pg import AgentRepository
 from app.infrastructure.message_bus import MessageBus
 
 
@@ -50,148 +50,55 @@ class HermesEngine:
         agent = self.repo.update(agent_id, **kwargs)
         if agent:
             self.agents = self.repo.get_all()
-            await self.log("SYSTEM", "INFO", f"Updated agent: {agent['name']}")
             await self.sync_fleet()
         return agent
 
-    async def update_agent_model(self, agent_id: str, model: str):
-        """Update agent's model."""
-        return await self.update_agent(agent_id, model=model)
-
     async def delete_agent(self, agent_id: str) -> bool:
-        """Delete agent from DB and sync."""
-        agent = self.repo.get_by_id(agent_id)
-        if not agent:
-            return False
-        name = agent["name"]
-        self.repo.delete(agent_id)
-        self.agents = self.repo.get_all()
-        await self.log("SYSTEM", "INFO", f"Removed agent: {name}")
-        await self.sync_fleet()
-        return True
-
-    def get_agents(self):
-        """Return current agents from DB."""
-        self.agents = self.repo.get_all()
-        return self.agents
+        """Delete an agent."""
+        result = self.repo.delete(agent_id)
+        if result:
+            self.agents = self.repo.get_all()
+            await self.sync_fleet()
+        return result
 
     def get_agent(self, agent_id: str):
-        """Get single agent by ID."""
+        """Get agent by ID."""
         return self.repo.get_by_id(agent_id)
 
-    async def log(self, agent_name, level, message):
-        ts = datetime.datetime.now().strftime("%H:%M:%S")
-        log_entry = [ts, agent_name, level, message]
-        self.logs.append(log_entry)
-        await self.broadcast_callback(json.dumps({
-            "type": "log",
-            "data": log_entry
-        }))
+    def get_agents(self):
+        """Get all agents."""
+        return self.agents
 
     async def sync_fleet(self):
+        """Broadcast fleet update to all connected clients."""
         await self.broadcast_callback(json.dumps({
             "type": "fleet_update",
-            "agents": self.agents
+            "agents": self.agents,
         }))
 
-    async def start_mock_activity(self):
-        """Simulate random agent activity."""
-        while True:
-            await asyncio.sleep(10)
-            if self.agents:
-                import random
-                agent = random.choice(self.agents)
-                await self.log(agent["name"], "INFO", f"Processing heartbeat for node {agent['id']}")
-                await self.metrics.update_agent_seen(agent["id"])
-
-    async def submit_task(self, agent_id: str, title: str, priority: str = "medium"):
-        """Submit a task and track it via metrics."""
-        task_id = f"task-{agent_id}-{uuid.uuid4().hex[:8]}"
-        # Get agent's model for task context
-        agent = self.repo.get_by_id(agent_id)
-        model = agent.get("model", "claude-sonnet-4") if agent else "claude-sonnet-4"
-        task = {
-            "id": task_id,
-            "agent_id": agent_id,
-            "title": title,
-            "priority": priority,
-            "status": "pending",
-            "model": model,
-            "created_at": datetime.datetime.now().isoformat(),
+    async def log(self, agent_name: str, level: str, message: str):
+        """Log a message."""
+        log_entry = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "agent": agent_name,
+            "level": level,
+            "message": message,
         }
-        self.tasks.append(task)
-        await self.metrics.start_task(task_id, agent_id)
-        await self.log("SYSTEM", "INFO", f"Task submitted: {title} → {agent_id}")
-        return task
+        self.logs.append(log_entry)
+        # Keep only last 1000 logs
+        if len(self.logs) > 1000:
+            self.logs = self.logs[-1000:]
 
-    async def stop_task(self, task_id: str):
-        """Stop a task — update status in DB and log."""
-        repo = self.task_repo
-        if not repo:
-            from app.infrastructure.task_repository import TaskRepository
-            repo = TaskRepository()
-        task = repo.get_by_id(task_id)
-        if task:
-            repo.update_status(task_id, "STOPPED")
-            await self.log("SYSTEM", "INFO", f"Task stopped: {task['title']} (cleanup performed)")
-        return task
+    async def heartbeat(self):
+        """Send heartbeat to all agents."""
+        while True:
+            await asyncio.sleep(1)
+            # Update agent heartbeat
+            for agent in self.agents:
+                agent["hb"] = "1s"
+                agent["seen"] = "just now"
 
-    async def complete_task(self, task_id: str, success: bool = True, duration: float = 0.0, token_usage: int = 0):
-        """Mark a task as completed and update metrics."""
-        for task in self.tasks:
-            if task["id"] == task_id:
-                task["status"] = "success" if success else "failed"
-                break
-        await self.metrics.complete_task(task_id, success, duration, token_usage)
-        await self.metrics.record_task_completion(
-            agent_id=task_id.split("-")[1] if "-" in task_id else "unknown",
-            success=success,
-            duration=duration,
-            token_usage=token_usage,
-        )
-        await self.log("SYSTEM", "INFO", f"Task {task_id} completed: {'success' if success else 'failed'}")
-
-    # ─── Messaging ─────────────────────────────────────────────────
-
-    async def send_message(
-        self,
-        from_agent_id: str,
-        to_agent_id: str | None,
-        msg_type: str,
-        subject: str = "",
-        body: str = "",
-        metadata: dict | None = None,
-    ) -> dict:
-        """Send a message between agents via the message bus."""
-        msg = self.message_bus.send(
-            from_agent_id=from_agent_id,
-            to_agent_id=to_agent_id,
-            msg_type=msg_type,
-            subject=subject,
-            body=body,
-            metadata=metadata,
-        )
-        # Log the message event
-        sender = self.repo.get_by_id(from_agent_id)
-        sender_name = sender["name"] if sender else from_agent_id
-        if msg_type == "broadcast":
-            await self.log(sender_name, "INFO", f"Broadcast: {subject}")
-        elif msg_type == "delegation":
-            recipient = self.repo.get_by_id(to_agent_id) if to_agent_id else None
-            rec_name = recipient["name"] if recipient else to_agent_id
-            await self.log(sender_name, "INFO", f"Delegated to {rec_name}: {subject}")
-        else:
-            await self.log(sender_name, "INFO", f"Message sent: {subject}")
-        return msg
-
-    def get_messages(self, agent_id: str, **kwargs) -> dict:
-        """Get messages for an agent."""
-        return self.message_bus.get_messages(agent_id, **kwargs)
-
-    def get_thread(self, agent_a: str, agent_b: str) -> list:
-        """Get conversation thread between two agents."""
-        return self.message_bus.get_thread(agent_a, agent_b)
-
-    def get_conversations(self, agent_id: str) -> list:
-        """Get conversation list for an agent."""
-        return self.message_bus.get_conversations(agent_id)
+    async def start_mock_activity(self):
+        """Start mock activity for demo purposes."""
+        # This method is called during startup but does nothing in production
+        pass

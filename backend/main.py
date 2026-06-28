@@ -6,6 +6,7 @@ import uvicorn
 import json
 import asyncio
 import os
+import socket
 import uuid
 import logging
 import time
@@ -17,13 +18,14 @@ from app.infrastructure.memory_manager import MemoryManager
 from app.infrastructure.metrics_collector import MetricsCollector
 from app.infrastructure.task_repository import TaskRepository
 from app.infrastructure.log_repository import LogRepository
-from app.infrastructure.agent_repository import VALID_MODELS
+from app.infrastructure.agent_repository_pg import VALID_MODELS
 from app.infrastructure.agent_config_repository import AgentConfigRepository
 from app.infrastructure.notification_service import NotificationService
 from app.infrastructure.cache_service import cache
 from app.infrastructure.ws_manager import ws_manager, CHANNELS
 from app.infrastructure.workflow_repository import WorkflowRepository
 from app.infrastructure.plugin_manager import plugin_manager
+from app.infrastructure.opencode_adapter import opencode_adapter
 from workflows.agent_workflow import AgentTaskWorkflow
 from app.infrastructure.auth_service import (
     LoginRequest, RefreshRequest, LogoutRequest,
@@ -122,8 +124,22 @@ app = FastAPI(lifespan=lifespan)
 
 # ─── CORS Hardening ───────────────────────────────────────────────
 # Restrict origins to specific frontend URL
+# Get local IP for network access
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
+
+_local_ip = get_local_ip()
+# Allow localhost, 127.0.0.1, local network IP, Docker IPs, and Cloudflare domain
 _allowed_origins = os.getenv(
-    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    "CORS_ORIGINS", 
+    f"http://localhost:3000,http://127.0.0.1:3000,http://{_local_ip}:3000,http://192.168.0.105:3000,http://172.18.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://{_local_ip}:3001,http://orc.routex.web.id,https://orc.routex.web.id,http://api-orc.routex.web.id,https://api-orc.routex.web.id,http://staging-orc.routex.web.id,https://staging-orc.routex.web.id,http://staging-api-orc.routex.web.id,https://staging-api-orc.routex.web.id"
 ).split(",")
 
 app.add_middleware(
@@ -669,13 +685,19 @@ async def update_agent(agent_id: str, data: AgentUpdate):
         raise HTTPException(status_code=404, detail="Agent not found")
     if data.model is not None and data.model not in VALID_MODELS:
         raise HTTPException(status_code=400, detail=f"Invalid model: {data.model}. Valid models: {', '.join(sorted(VALID_MODELS))}")
-    updated = await hermes.update_agent(
-        agent_id,
-        name=data.name,
-        role=data.role,
-        model=data.model,
-        status=data.status,
-    )
+    # Only pass non-None fields to avoid overwriting existing values with NULL
+    update_fields = {}
+    if data.name is not None:
+        update_fields["name"] = data.name
+    if data.role is not None:
+        update_fields["role"] = data.role
+    if data.model is not None:
+        update_fields["model"] = data.model
+    if data.status is not None:
+        update_fields["status"] = data.status
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    updated = await hermes.update_agent(agent_id, **update_fields)
     # If model changed, broadcast model_update
     if data.model and data.model != agent.get("model"):
         await ws_manager.broadcast(json.dumps({
@@ -738,6 +760,16 @@ async def list_models():
             family = "gpt"
         elif "kimi" in model_name:
             family = "kimi"
+        elif "minimax" in model_name:
+            family = "minimax"
+        elif "glm" in model_name:
+            family = "glm"
+        elif "deepseek" in model_name:
+            family = "deepseek"
+        elif "qwen" in model_name:
+            family = "qwen"
+        elif "mimo" in model_name:
+            family = "mimo"
         models.append({
             "id": model_name,
             "name": model_name,
@@ -785,10 +817,11 @@ async def dispatch_task(task_data: TaskCreate):
             logger.error("Temporal workflow start failed: %s", e)
             # Task remains QUEUED - can be retried
     else:
-        # No Temporal - simulate task execution
+        # No Temporal - execute via OpenCode API
         task_repo.update_status(task["id"], "RUNNING")
         task["status"] = "RUNNING"
-        asyncio.create_task(_simulate_task(task["id"], task_data.agent_id, task_data.title))
+        model = agent.get("model", "minimax-m3")
+        asyncio.create_task(_execute_task_with_opencode(task["id"], task_data.agent_id, task_data.title, model))
         # Track task start in metrics
         await metrics_collector.start_task(task["id"], task_data.agent_id)
 
@@ -805,8 +838,166 @@ async def dispatch_task(task_data: TaskCreate):
     return task
 
 
+async def _execute_task_with_opencode(task_id: str, agent_id: str, title: str, model: str = "minimax-m3"):
+    """Execute task via OpenCode API."""
+    from app.infrastructure.opencode_adapter import opencode_adapter
+    
+    # Store ref so we can cancel on stop
+    _active_sim_tasks[task_id] = asyncio.current_task()
+    
+    # Get agent config for system prompt
+    agent = hermes.get_agent(agent_id)
+    agent_name = agent.get("name", agent_id) if agent else agent_id
+    system_prompt = agent.get("system_prompt", "") if agent else ""
+    
+    log_repo.create(f"Task execution started: {title}", level="INFO", task_id=task_id, agent_id=agent_id)
+    log_repo.create(f"Connecting to OpenCode with model: {model}", level="DEBUG", task_id=task_id, agent_id=agent_id)
+    
+    try:
+        # Execute via OpenCode
+        result = await opencode_adapter.execute_task(
+            task_id=task_id,
+            prompt=title,
+            model=model,
+            system_prompt=system_prompt,
+            temperature=0.7,
+            max_tokens=4096
+        )
+        
+        if result["success"]:
+            # Task completed successfully
+            content = result["content"]
+            input_tokens = result["input_tokens"]
+            output_tokens = result["output_tokens"]
+            cost = result["cost"]
+            duration = result["duration"]
+            
+            log_repo.create(f"Generated {input_tokens + output_tokens} tokens (input: {input_tokens}, output: {output_tokens})", 
+                          level="DEBUG", task_id=task_id, agent_id=agent_id)
+            log_repo.create(f"Task processing complete, writing results...", level="INFO", task_id=task_id, agent_id=agent_id)
+            
+            # Only complete if not already stopped
+            current = task_repo.get_by_id(task_id)
+            if current and current["status"] == "RUNNING":
+                result_json = json.dumps({"output": content})
+                task_repo.update_status(task_id, "COMPLETED", result=result_json, tokens_used=input_tokens + output_tokens)
+                task = task_repo.get_by_id(task_id)
+                
+                # Track cost in metrics collector
+                await metrics_collector.complete_task(
+                    task_id=task_id,
+                    success=True,
+                    duration=duration,
+                    token_usage=input_tokens + output_tokens,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    model=model,
+                )
+                
+                # Create notification for completed task
+                task_metrics = await metrics_collector.get_task_metrics(task_id)
+                cost = task_metrics.get("cost", 0.0) if task_metrics else 0.0
+                await _emit_notification(
+                    "task_completed",
+                    f"Task Completed: {title}",
+                    f"Agent: {agent_name} · Duration: {duration:.1f}s · Tokens: {input_tokens + output_tokens:,} · Cost: ${cost:.4f}",
+                    {"task_id": task_id, "agent_id": agent_id, "agent_name": agent_name, "duration": duration, "tokens": input_tokens + output_tokens, "cost": cost},
+                    task_title=title,
+                    agent_name=agent_name,
+                    duration=duration,
+                    tokens_used=input_tokens + output_tokens,
+                    cost=cost,
+                )
+                
+                # Broadcast task update
+                await ws_manager.broadcast(json.dumps({
+                    "type": "task_update",
+                    "task": task,
+                }), channel="tasks")
+                
+                await hermes.log("SYSTEM", "INFO", f"Task completed: {title} ({duration:.1f}s, {input_tokens + output_tokens} tokens)")
+        else:
+            # Task failed
+            error_msg = result.get("error", "Unknown error")
+            log_repo.create(f"Task failed: {error_msg}", level="ERROR", task_id=task_id, agent_id=agent_id)
+            
+            current = task_repo.get_by_id(task_id)
+            if current and current["status"] == "RUNNING":
+                task_repo.update_status(task_id, "FAILED", result=json.dumps({"error": error_msg}))
+                
+                await _emit_notification(
+                    "task_failed",
+                    f"Task Failed: {title}",
+                    f"Agent: {agent_name} · Error: {error_msg}",
+                    {"task_id": task_id, "agent_id": agent_id, "agent_name": agent_name, "error": error_msg},
+                    task_title=title,
+                    agent_name=agent_name,
+                )
+                
+                # Broadcast task update
+                task = task_repo.get_by_id(task_id)
+                await ws_manager.broadcast(json.dumps({
+                    "type": "task_update",
+                    "task": task,
+                }), channel="tasks")
+                
+                await hermes.log("SYSTEM", "ERROR", f"Task failed: {title} - {error_msg}")
+                
+    except asyncio.CancelledError:
+        # Task was stopped
+        log_repo.create(f"Task stopped by user", level="WARNING", task_id=task_id, agent_id=agent_id)
+        opencode_adapter.stop_task(task_id)
+        
+        current = task_repo.get_by_id(task_id)
+        if current and current["status"] == "RUNNING":
+            task_repo.update_status(task_id, "STOPPED")
+            
+            await _emit_notification(
+                "task_stopped",
+                f"Task Stopped: {title}",
+                f"Agent: {agent_name}",
+                {"task_id": task_id, "agent_id": agent_id, "agent_name": agent_name},
+                task_title=title,
+                agent_name=agent_name,
+            )
+            
+            # Broadcast task update
+            task = task_repo.get_by_id(task_id)
+            await ws_manager.broadcast(json.dumps({
+                "type": "task_update",
+                "task": task,
+            }), channel="tasks")
+            
+            await hermes.log("SYSTEM", "WARNING", f"Task stopped: {title}")
+            
+    except Exception as e:
+        # Unexpected error
+        logger.error(f"Task {task_id} unexpected error: {e}")
+        log_repo.create(f"Unexpected error: {str(e)}", level="ERROR", task_id=task_id, agent_id=agent_id)
+        
+        current = task_repo.get_by_id(task_id)
+        if current and current["status"] == "RUNNING":
+            task_repo.update_status(task_id, "FAILED", result=json.dumps({"error": str(e)}))
+            
+            await _emit_notification(
+                "task_failed",
+                f"Task Failed: {title}",
+                f"Agent: {agent_name} · Error: {str(e)}",
+                {"task_id": task_id, "agent_id": agent_id, "agent_name": agent_name, "error": str(e)},
+                task_title=title,
+                agent_name=agent_name,
+            )
+            
+            await hermes.log("SYSTEM", "ERROR", f"Task failed: {title} - {str(e)}")
+    
+    finally:
+        # Cleanup
+        if task_id in _active_sim_tasks:
+            del _active_sim_tasks[task_id]
+
+
 async def _simulate_task(task_id: str, agent_id: str, title: str):
-    """Simulate task execution when Temporal is not available."""
+    """Simulate task execution when Temporal is not available (fallback)."""
     import random
     # Store ref so we can cancel on stop
     _active_sim_tasks[task_id] = asyncio.current_task()

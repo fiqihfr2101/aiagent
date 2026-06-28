@@ -1,3 +1,5 @@
+'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { memo, useState, useEffect, useCallback } from 'react';
 import { Agent, Memory, MemoryStats } from '../types';
@@ -41,7 +43,7 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
   useEffect(() => {
     if (Object.keys(memories).length === 0) {
       const fetchMemories = async () => {
-        const resp = await fetch(`http://localhost:8000/memories/${activeId}`);
+        const resp = await fetch(`${API_BASE}/memories/${activeId}`);
         if (resp.ok) {
           const data = await resp.json();
           setInternalMemories(prev => ({ ...prev, [activeId]: data }));
@@ -54,7 +56,7 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
   // Fetch stats when agent changes
   const fetchStats = useCallback(async () => {
     try {
-      const resp = await fetch(`http://localhost:8000/memories/${activeId}/stats`);
+      const resp = await fetch(`${API_BASE}/memories/${activeId}/stats`);
       if (resp.ok) {
         const data = await resp.json();
         setStats(data);
@@ -72,12 +74,12 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
     setArchiving(true);
     setActionResult(null);
     try {
-      const resp = await fetch(`http://localhost:8000/memories/${activeId}/archive?older_than_days=30`, { method: 'POST' });
+      const resp = await fetch(`${API_BASE}/memories/${activeId}/archive?older_than_days=30`, { method: 'POST' });
       if (resp.ok) {
         const data = await resp.json();
         setActionResult(`Archived ${data.archived_count} memories`);
         // Refresh memories
-        const memResp = await fetch(`http://localhost:8000/memories/${activeId}`);
+        const memResp = await fetch(`${API_BASE}/memories/${activeId}`);
         if (memResp.ok) {
           const memData = await memResp.json();
           setInternalMemories(prev => ({ ...prev, [activeId]: memData }));
@@ -95,12 +97,12 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
     setConsolidating(true);
     setActionResult(null);
     try {
-      const resp = await fetch(`http://localhost:8000/memories/${activeId}/consolidate`, { method: 'POST' });
+      const resp = await fetch(`${API_BASE}/memories/${activeId}/consolidate`, { method: 'POST' });
       if (resp.ok) {
         const data = await resp.json();
         setActionResult(`Merged ${data.merged_count} similar memories (${data.memories_remaining} remaining)`);
         // Refresh memories
-        const memResp = await fetch(`http://localhost:8000/memories/${activeId}`);
+        const memResp = await fetch(`${API_BASE}/memories/${activeId}`);
         if (memResp.ok) {
           const memData = await memResp.json();
           setInternalMemories(prev => ({ ...prev, [activeId]: memData }));
@@ -117,7 +119,7 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
   const handleShare = async () => {
     if (!shareMemoryId || !shareTargetAgent) return;
     try {
-      const resp = await fetch('http://localhost:8000/memories/share', {
+      const resp = await fetch(API_BASE + '/memories/share', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

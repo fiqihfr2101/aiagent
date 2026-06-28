@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { memo, useState, useEffect, useCallback } from 'react';
 import { cachedFetch } from '@/utils/apiCache';
@@ -7,7 +8,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 
-const API = 'http://localhost:8000';
+const API = API_BASE;
 
 const COLORS = ['#00D4AA', '#6366F1', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'];
 

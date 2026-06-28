@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE } from '../utils/api';
 
 import React, { useState, useEffect, useCallback } from 'react';
 
@@ -19,7 +20,7 @@ interface InstalledPlugin {
   updated_at: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || API_BASE;
 
 export default function PluginManager() {
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([]);
@@ -232,7 +233,7 @@ export default function PluginManager() {
                 <div key={key}>
                   <label className="text-[10px] text-txt3 tracking-[0.08em] uppercase mb-1 block">
                     {key}
-                    <span className="ml-1 text-txt3/60 normal-case">({schema.type})</span>
+                    <span className="ml-1 text-txt2 normal-case">({schema.type})</span>
                   </label>
                   <div className="text-[9px] text-txt3 mb-1">{schema.description}</div>
                   {schema.type === 'boolean' ? (

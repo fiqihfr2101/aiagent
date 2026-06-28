@@ -1,0 +1,78 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - REDIS_URL=redis://redis:6379/0
+    restart: always
+    depends_on:
+      - temporal
+      - redis
+
+  worker:
+    build: ./backend
+    command: python worker.py
+    volumes:
+      - ./backend/data:/app/data
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - BACKEND_INTERNAL_URL=http://backend:8000
+    restart: always
+    depends_on:
+      - temporal
+      - backend
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    environment:
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8000/ws
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    restart: always
+
+  # Redis Cache
+  redis:
+    container_name: hermes-redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    restart: always
+
+  # Temporal Cluster
+  temporal:
+    container_name: temporal
+    image: temporalio/auto-setup:1.22.0
+    ports:
+      - "7233:7233"
+      - "8080:8080"
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-db
+    depends_on:
+      - temporal-db
+
+  temporal-db:
+    container_name: temporal-db
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_DB=temporal
+    ports:
+      - "5432:5432"
+
+volumes:
+  redis_data:

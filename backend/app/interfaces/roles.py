@@ -169,6 +169,35 @@ ROLES: List[Dict[str, Any]] = [
             "TYPESCRIPT": "true",
         },
     },
+    {
+        "id": "project_manager",
+        "name": "Project Manager",
+        "description": "Manages project development from start to finish, coordinates team members, tracks progress, manages resources and timelines",
+        "color": "#7C3AED",  # violet
+        "icon": "📋",
+        "tools": [
+            "terminal", "file_read", "file_write", "code_execute",
+            "git", "web_preview", "api_test",
+        ],
+        "toolsets": ["project_management", "terminal", "file_access", "collaboration"],
+        "system_prompt": (
+            "You are an experienced project manager responsible for overseeing software "
+            "development projects from inception to delivery. You excel at breaking down "
+            "complex projects into manageable tasks, coordinating team members across "
+            "different roles (backend, frontend, QA, DevOps, security), tracking progress "
+            "against milestones, managing resources and timelines, and ensuring successful "
+            "project delivery. You create clear project plans, facilitate communication "
+            "between team members, identify and mitigate risks, and maintain project "
+            "documentation. You follow agile methodologies and use data-driven approaches "
+            "to keep projects on track and within scope."
+        ),
+        "env_vars": {
+            "METHODOLOGY": "agile",
+            "TRACKING_TOOL": "github-projects",
+            "COMMUNICATION": "async",
+            "REPORTING_FREQUENCY": "daily",
+        },
+    },
 ]
 
 
