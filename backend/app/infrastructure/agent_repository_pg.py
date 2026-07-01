@@ -56,7 +56,7 @@ class AgentRepository:
                 name TEXT NOT NULL,
                 role TEXT NOT NULL,
                 model TEXT NOT NULL DEFAULT 'claude-sonnet-4',
-                status TEXT NOT NULL DEFAULT 'idle',
+                status TEXT NOT NULL DEFAULT 'active',
                 task TEXT DEFAULT 'Idle',
                 color TEXT DEFAULT '#00D4AA',
                 created_at TEXT NOT NULL,
@@ -69,17 +69,15 @@ class AgentRepository:
             logger.info("Agents table ensured in PostgreSQL")
         except Exception as e:
             logger.warning("Could not create agents table (may already exist): %s", e)
-
-        # Migration: set agents without active tasks to 'idle'
+        
+        # Migration: reset all agents stuck in 'active' to 'idle'
         try:
             with self._pool.cursor() as cursor:
-                cursor.execute(
-                    "UPDATE agents SET status = 'idle' WHERE status = 'active'"
-                )
+                cursor.execute("UPDATE agents SET status = 'idle' WHERE status = 'active'")
                 if cursor.rowcount > 0:
-                    logger.info("Migration: set %d agents to 'idle' (no task state check)", cursor.rowcount)
+                    logger.info("Migration: reset %d agents from 'active' to 'idle'", cursor.rowcount)
         except Exception as e:
-            logger.warning("Agent status migration skipped: %s", e)
+            logger.warning("Could not run status migration: %s", e)
     
     def _row_to_dict(self, row) -> Dict[str, Any]:
         """Convert a PostgreSQL row to a dictionary."""
@@ -178,13 +176,16 @@ class AgentRepository:
             cursor.execute(query, (agent_id,))
             return cursor.rowcount > 0
     
-    def update_status(self, agent_id: str, status: str) -> bool:
+    def update_status(self, agent_id: str, status: str) -> Optional[Dict[str, Any]]:
         """Update agent status (idle, active, sleeping, offline)."""
+        query = """
+            UPDATE agents SET status = %s, updated_at = %s WHERE id = %s RETURNING *
+        """
         now = datetime.datetime.now().isoformat()
-        query = "UPDATE agents SET status = %s, updated_at = %s WHERE id = %s"
         with self._pool.cursor() as cursor:
             cursor.execute(query, (status, now, agent_id))
-            return cursor.rowcount > 0
+            row = cursor.fetchone()
+            return self._row_to_dict(row) if row else None
     
     def get_status(self, agent_id: str) -> Optional[str]:
         """Get agent status."""

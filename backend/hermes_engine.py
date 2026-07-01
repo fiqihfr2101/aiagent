@@ -71,7 +71,7 @@ class HermesEngine:
         return self.agents
 
     async def set_agent_status(self, agent_id: str, status: str):
-        """Update agent status in DB and sync fleet."""
+        """Update agent status in DB and broadcast via WebSocket."""
         # Track activity timestamp for sleeping detection
         if status == "active":
             self._last_activity[agent_id] = asyncio.get_event_loop().time()
