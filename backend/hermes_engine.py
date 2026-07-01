@@ -19,6 +19,7 @@ class HermesEngine:
         self.logs = []
         self.task_repo = task_repo
         self.message_bus = MessageBus()
+        self._last_activity: dict[str, float] = {}  # agent_id -> last activity timestamp
 
     async def initialize(self):
         """Load agents from DB, seed defaults if empty."""
@@ -26,9 +27,9 @@ class HermesEngine:
         if existing:
             self.agents = existing
         else:
-            # Seed default agents
-            self.repo.create("JARVIS", "Squad Lead", "claude-sonnet-4", "active", "#00D4AA")
-            self.repo.create("ARCHITECT", "Strategist", "gpt-4o", "active", "#6366F1")
+            # Seed default agents (idle by default, no tasks assigned)
+            self.repo.create("JARVIS", "Squad Lead", "claude-sonnet-4", "idle", "#00D4AA")
+            self.repo.create("ARCHITECT", "Strategist", "gpt-4o", "idle", "#6366F1")
             self.agents = self.repo.get_all()
 
     async def register_agent(self, name, role, model):
@@ -69,6 +70,15 @@ class HermesEngine:
         """Get all agents."""
         return self.agents
 
+    async def set_agent_status(self, agent_id: str, status: str):
+        """Update agent status in DB and sync fleet."""
+        # Track activity timestamp for sleeping detection
+        if status == "active":
+            self._last_activity[agent_id] = asyncio.get_event_loop().time()
+        self.repo.update_status(agent_id, status)
+        self.agents = self.repo.get_all()
+        await self.sync_fleet()
+
     async def sync_fleet(self):
         """Broadcast fleet update to all connected clients."""
         await self.broadcast_callback(json.dumps({
@@ -90,13 +100,32 @@ class HermesEngine:
             self.logs = self.logs[-1000:]
 
     async def heartbeat(self):
-        """Send heartbeat to all agents."""
+        """Send heartbeat to all agents, mark idle agents as sleeping after timeout."""
+        SLEEPING_TIMEOUT = 300  # 5 minutes
         while True:
-            await asyncio.sleep(1)
-            # Update agent heartbeat
+            await asyncio.sleep(10)  # Check every 10 seconds
+            now = asyncio.get_event_loop().time()
             for agent in self.agents:
-                agent["hb"] = "1s"
-                agent["seen"] = "just now"
+                agent_id = agent["id"]
+                status = agent.get("status", "idle")
+
+                # If agent is idle and hasn't had activity for 5+ min → sleeping
+                if status == "idle":
+                    last = self._last_activity.get(agent_id, 0)
+                    if last > 0 and (now - last) > SLEEPING_TIMEOUT:
+                        self.repo.update_status(agent_id, "sleeping")
+                        agent["status"] = "sleeping"
+
+                # Update display heartbeat fields
+                if status == "active":
+                    agent["hb"] = "1s"
+                    agent["seen"] = "just now"
+                elif status == "idle":
+                    agent["hb"] = "10s"
+                    agent["seen"] = "recently"
+                elif status == "sleeping":
+                    agent["hb"] = ">5m"
+                    agent["seen"] = "a while ago"
 
     async def start_mock_activity(self):
         """Start mock activity for demo purposes."""

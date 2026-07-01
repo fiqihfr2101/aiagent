@@ -616,6 +616,10 @@ async def submit_task(data: TaskSubmit):
     )
 
     await hermes.log("SYSTEM", "INFO", f"Triggered workflow for task: {data.title}")
+    
+    # Set agent status to 'active' when task is submitted
+    await hermes.set_agent_status(data.agent_id, "active")
+    
     return {"workflow_id": handle.id}
 
 @app.get("/memories/{agent_id}")
@@ -975,6 +979,9 @@ async def dispatch_task(task_data: TaskCreate):
 
     await hermes.log("SYSTEM", "INFO", f"Task dispatched: {task_data.title} → {agent['name']}")
     
+    # Set agent status to 'active' when task is dispatched
+    await hermes.set_agent_status(task_data.agent_id, "active")
+    
     # Broadcast task update via WebSocket (tasks channel)
     await ws_manager.broadcast(json.dumps({
         "type": "task_update",
@@ -1064,6 +1071,9 @@ async def _execute_task_with_opencode(task_id: str, agent_id: str, title: str, m
                 }), channel="tasks")
                 
                 await hermes.log("SYSTEM", "INFO", f"Task completed: {title} ({duration:.1f}s, {input_tokens + output_tokens} tokens)")
+                
+                # Set agent back to idle after task completion
+                await hermes.set_agent_status(agent_id, "idle")
         else:
             # Task failed
             error_msg = result.get("error", "Unknown error")
@@ -1090,6 +1100,9 @@ async def _execute_task_with_opencode(task_id: str, agent_id: str, title: str, m
                 }), channel="tasks")
                 
                 await hermes.log("SYSTEM", "ERROR", f"Task failed: {title} - {error_msg}")
+                
+                # Set agent back to idle after task failure
+                await hermes.set_agent_status(agent_id, "idle")
                 
     except asyncio.CancelledError:
         # Task was stopped
@@ -1118,6 +1131,9 @@ async def _execute_task_with_opencode(task_id: str, agent_id: str, title: str, m
             
             await hermes.log("SYSTEM", "WARNING", f"Task stopped: {title}")
             
+            # Set agent back to idle after task cancellation
+            await hermes.set_agent_status(agent_id, "idle")
+            
     except Exception as e:
         # Unexpected error
         logger.error(f"Task {task_id} unexpected error: {e}")
@@ -1137,6 +1153,9 @@ async def _execute_task_with_opencode(task_id: str, agent_id: str, title: str, m
             )
             
             await hermes.log("SYSTEM", "ERROR", f"Task failed: {title} - {str(e)}")
+            
+            # Set agent back to idle after unexpected error
+            await hermes.set_agent_status(agent_id, "idle")
     
     finally:
         # Cleanup
@@ -1256,6 +1275,10 @@ async def stop_task(task_id: str):
     task_repo.update_status(task_id, "STOPPED")
     log_repo.create("Task stopped by user", level="WARNING", task_id=task_id, agent_id=task.get("agent_id"))
 
+    # Set agent status back to idle
+    if task.get("agent_id"):
+        await hermes.set_agent_status(task["agent_id"], "idle")
+
     # Stop OpenCode adapter if active
     try:
         opencode_adapter.stop_task(task_id)
@@ -1313,6 +1336,10 @@ async def update_task_status(task_id: str, data: TaskUpdate):
 
     task_repo.update_status(task_id, data.status, result=data.result, tokens_used=data.tokens_used)
     updated_task = task_repo.get_by_id(task_id)
+
+    # If task completed/failed/stopped, set agent back to idle
+    if data.status in ("COMPLETED", "FAILED", "STOPPED") and updated_task.get("agent_id"):
+        await hermes.set_agent_status(updated_task["agent_id"], "idle")
 
     # Broadcast task update (tasks channel)
     await ws_manager.broadcast(json.dumps({
@@ -1617,7 +1644,8 @@ async def system_heartbeat():
             "status": "online",
             "active_nodes": len(hermes.agents),
             "running": sum(1 for a in hermes.agents if a.get("status") == "active"),
-            "sleeping": sum(1 for a in hermes.agents if a.get("status") == "idle"),
+            "sleeping": sum(1 for a in hermes.agents if a.get("status") == "sleeping"),
+            "idle": sum(1 for a in hermes.agents if a.get("status") == "idle"),
             "offline": sum(1 for a in hermes.agents if a.get("status") == "offline"),
         }
         await ws_manager.broadcast(json.dumps(status_update), channel="system")

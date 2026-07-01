@@ -56,7 +56,7 @@ class AgentRepository:
                 name TEXT NOT NULL,
                 role TEXT NOT NULL,
                 model TEXT NOT NULL DEFAULT 'claude-sonnet-4',
-                status TEXT NOT NULL DEFAULT 'active',
+                status TEXT NOT NULL DEFAULT 'idle',
                 task TEXT DEFAULT 'Idle',
                 color TEXT DEFAULT '#00D4AA',
                 created_at TEXT NOT NULL,
@@ -69,6 +69,17 @@ class AgentRepository:
             logger.info("Agents table ensured in PostgreSQL")
         except Exception as e:
             logger.warning("Could not create agents table (may already exist): %s", e)
+
+        # Migration: set agents without active tasks to 'idle'
+        try:
+            with self._pool.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE agents SET status = 'idle' WHERE status = 'active'"
+                )
+                if cursor.rowcount > 0:
+                    logger.info("Migration: set %d agents to 'idle' (no task state check)", cursor.rowcount)
+        except Exception as e:
+            logger.warning("Agent status migration skipped: %s", e)
     
     def _row_to_dict(self, row) -> Dict[str, Any]:
         """Convert a PostgreSQL row to a dictionary."""
@@ -91,7 +102,7 @@ class AgentRepository:
         }
     
     def create(self, name: str, role: str, model: str = "claude-sonnet-4", 
-               status: str = "active", color: str = "#00D4AA") -> Dict[str, Any]:
+               status: str = "idle", color: str = "#00D4AA") -> Dict[str, Any]:
         """Create a new agent."""
         agent_id = name.lower().replace(" ", "_") + "_" + uuid.uuid4().hex[:6]
         now = datetime.datetime.now().isoformat()
@@ -166,6 +177,22 @@ class AgentRepository:
         with self._pool.cursor() as cursor:
             cursor.execute(query, (agent_id,))
             return cursor.rowcount > 0
+    
+    def update_status(self, agent_id: str, status: str) -> bool:
+        """Update agent status (idle, active, sleeping, offline)."""
+        now = datetime.datetime.now().isoformat()
+        query = "UPDATE agents SET status = %s, updated_at = %s WHERE id = %s"
+        with self._pool.cursor() as cursor:
+            cursor.execute(query, (status, now, agent_id))
+            return cursor.rowcount > 0
+    
+    def get_status(self, agent_id: str) -> Optional[str]:
+        """Get agent status."""
+        query = "SELECT status FROM agents WHERE id = %s"
+        with self._pool.cursor() as cursor:
+            cursor.execute(query, (agent_id,))
+            row = cursor.fetchone()
+            return row["status"] if row else None
     
     def count(self) -> int:
         """Get the number of agents."""
