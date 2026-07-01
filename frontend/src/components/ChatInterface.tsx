@@ -1346,13 +1346,7 @@ export default function ChatInterface({ agents, conversationId: propConversation
         {/* Quick Agent Hints */}
         <div className="flex items-center gap-2 mt-2 flex-wrap">
           <span className="text-[9px] text-txt3">Route to:</span>
-          {[
-            { name: 'HILMAN', color: '#00D4AA', hint: 'PM tasks' },
-            { name: 'BAHLUL', color: '#6366F1', hint: 'Backend' },
-            { name: 'DEDEN', color: '#F59E0B', hint: 'Frontend' },
-            { name: 'TEDDY', color: '#EC4899', hint: 'UI Design' },
-            { name: 'BUDI', color: '#22C55E', hint: 'QA/Test' },
-          ].map(agent => (
+          {(agents || []).map(agent => ({ name: agent.name, color: agent.color, hint: agent.role })).map(agent => (
             <button
               key={agent.name}
               onClick={() => {
