@@ -125,6 +125,45 @@ async def lifespan(app):
     for agent in hermes.agents:
         await metrics_collector.register_agent(agent["id"], agent["name"])
 
+    # ─── Auto-recovery: recover stuck tasks from previous crash ───
+    try:
+        stuck_tasks = task_repo.get_all(status="RUNNING")
+        if stuck_tasks:
+            logger.warning("Found %d stuck RUNNING task(s) after restart, recovering...", len(stuck_tasks))
+            for task in stuck_tasks:
+                task_id = task["id"]
+                agent_id = task.get("agent_id")
+                title = task.get("title", "Unknown")
+
+                # Mark task as FAILED so user can re-dispatch
+                task_repo.update_status(task_id, "FAILED", result="Auto-recovered: container restarted while task was running")
+
+                # Reset agent status back to idle
+                if agent_id:
+                    try:
+                        hermes.repo.update_status(agent_id, "idle")
+                    except Exception as e:
+                        logger.warning("Could not reset agent %s status: %s", agent_id, e)
+
+                # Log the recovery action
+                log_repo.create(
+                    message=f"Task auto-recovered after restart: {title}",
+                    level="WARNING",
+                    task_id=task_id,
+                    agent_id=agent_id,
+                )
+
+                logger.info("Recovered task %s (%s) for agent %s", task_id, title, agent_id)
+
+            # Refresh agents list and broadcast to frontend
+            hermes.agents = hermes.repo.get_all()
+            await hermes.sync_fleet()
+            logger.info("Startup recovery complete: %d task(s) recovered", len(stuck_tasks))
+        else:
+            logger.info("Startup recovery: no stuck tasks found")
+    except Exception as e:
+        logger.error("Startup recovery failed: %s", e)
+
     asyncio.create_task(system_heartbeat())
     asyncio.create_task(ws_metrics_broadcast_loop())
     asyncio.create_task(hermes.start_mock_activity())
