@@ -1,5 +1,5 @@
 'use client';
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Agent } from '@/types';
@@ -83,7 +83,7 @@ export default function MessageCenter({ agents, lastAgentMessage }: MessageCente
     try {
       const params = new URLSearchParams({ limit: '100' });
       if (filterType) params.set('msg_type', filterType);
-      const res = await fetch(`${API_BASE}/messages/${selectedAgentId}?${params}`);
+      const res = await fetch(`${API_BASE}/messages/${selectedAgentId}?${params}`, { headers: getAuthHeaders('') });
       if (res.ok) {
         const data = await res.json();
         setMessages(data.messages || []);
@@ -98,7 +98,7 @@ export default function MessageCenter({ agents, lastAgentMessage }: MessageCente
   const fetchConversations = useCallback(async () => {
     if (!selectedAgentId) return;
     try {
-      const res = await fetch(`${API_BASE}/messages/${selectedAgentId}/conversations`);
+      const res = await fetch(`${API_BASE}/messages/${selectedAgentId}/conversations`, { headers: getAuthHeaders('') });
       if (res.ok) {
         setConversations(await res.json());
       }
@@ -111,7 +111,7 @@ export default function MessageCenter({ agents, lastAgentMessage }: MessageCente
     if (!selectedAgentId) return;
     setThreadWith(otherAgentId);
     try {
-      const res = await fetch(`${API_BASE}/messages/${selectedAgentId}/thread/${otherAgentId}`);
+      const res = await fetch(`${API_BASE}/messages/${selectedAgentId}/thread/${otherAgentId}`, { headers: getAuthHeaders('') });
       if (res.ok) {
         setThreadMessages(await res.json());
       }
@@ -126,7 +126,7 @@ export default function MessageCenter({ agents, lastAgentMessage }: MessageCente
     try {
       const res = await fetch(`${API_BASE}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           from_agent_id: selectedAgentId,
           to_agent_id: sendType === 'broadcast' ? null : sendTo || null,
@@ -151,7 +151,7 @@ export default function MessageCenter({ agents, lastAgentMessage }: MessageCente
 
   const handleMarkRead = useCallback(async (msgId: string) => {
     try {
-      await fetch(`${API_BASE}/messages/${msgId}/read`, { method: 'POST' });
+      await fetch(`${API_BASE}/messages/${msgId}/read`, { method: 'POST', headers: getAuthHeaders('') });
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, read: true } : m));
     } catch (err) {
       console.error('Failed to mark message read:', err);
@@ -161,7 +161,7 @@ export default function MessageCenter({ agents, lastAgentMessage }: MessageCente
   const handleMarkAllRead = useCallback(async () => {
     if (!selectedAgentId) return;
     try {
-      await fetch(`${API_BASE}/messages/${selectedAgentId}/read-all`, { method: 'POST' });
+      await fetch(`${API_BASE}/messages/${selectedAgentId}/read-all`, { method: 'POST', headers: getAuthHeaders('') });
       setMessages(prev => prev.map(m => ({ ...m, read: true })));
     } catch (err) {
       console.error('Failed to mark all read:', err);

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { memo, useState, useEffect } from 'react';
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 
 interface CacheStatus {
   available: boolean;
@@ -19,7 +19,7 @@ const CacheStatusIndicator: React.FC = memo(() => {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`${API_BASE}/cache/status`);
+        const res = await fetch(`${API_BASE}/cache/status`, { headers: getAuthHeaders('') });
         if (res.ok) {
           const data = await res.json();
           setStatus(data);

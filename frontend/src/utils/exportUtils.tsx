@@ -61,9 +61,9 @@ export function exportAnalytics(data: AnalyticsExportData, format: 'csv' | 'json
       Value: kpi.value,
       Timestamp: data.timestamp,
     }));
-    exportToCSV(rows, `hermes-analytics-${Date.now()}`);
+    exportToCSV(rows, `afilabs-analytics-${Date.now()}`);
   } else {
-    exportToJSON(data, `hermes-analytics-${Date.now()}`);
+    exportToJSON(data, `afilabs-analytics-${Date.now()}`);
   }
 }
 
@@ -82,9 +82,9 @@ export interface TaskExportRow {
 
 export function exportTaskHistory(tasks: TaskExportRow[], format: 'csv' | 'json') {
   if (format === 'csv') {
-    exportToCSV(tasks, `hermes-tasks-${Date.now()}`);
+    exportToCSV(tasks, `afilabs-tasks-${Date.now()}`);
   } else {
-    exportToJSON(tasks, `hermes-tasks-${Date.now()}`);
+    exportToJSON(tasks, `afilabs-tasks-${Date.now()}`);
   }
 }
 
@@ -104,11 +104,11 @@ export interface AgentConfigExport {
 }
 
 export function exportAgentConfig(config: AgentConfigExport) {
-  exportToJSON(config, `hermes-agent-${config.agent_name}-${Date.now()}`);
+  exportToJSON(config, `afilabs-agent-${config.agent_name}-${Date.now()}`);
 }
 
 export function exportAllAgentConfigs(configs: AgentConfigExport[]) {
-  exportToJSON(configs, `hermes-all-agents-${Date.now()}`);
+  exportToJSON(configs, `afilabs-all-agents-${Date.now()}`);
 }
 
 // ─── Utility ──────────────────────────────────────────────────────

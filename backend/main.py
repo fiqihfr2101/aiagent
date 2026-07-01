@@ -1,5 +1,6 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Query, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from typing import Optional, List
 from temporalio.client import Client
 import uvicorn
@@ -26,6 +27,10 @@ from app.infrastructure.ws_manager import ws_manager, CHANNELS
 from app.infrastructure.workflow_repository import WorkflowRepository
 from app.infrastructure.plugin_manager import plugin_manager
 from app.infrastructure.opencode_adapter import opencode_adapter
+from app.infrastructure.orchestrator import determine_agent, get_agent_info, get_all_agents, determine_collaboration, get_base_system_prompt, AGENT_ROUTES
+from app.infrastructure.knowledge_bridge import get_knowledge_bridge
+from app.infrastructure.collaboration_engine import CollaborationEngine
+from app.infrastructure.chat_repository import get_chat_repo
 from workflows.agent_workflow import AgentTaskWorkflow
 from app.infrastructure.auth_service import (
     LoginRequest, RefreshRequest, LogoutRequest,
@@ -35,6 +40,11 @@ from app.infrastructure.auth_service import (
 )
 from app.infrastructure.account_service import setup_2fa, verify_totp_code
 from app.infrastructure.rate_limiter import rate_limiter
+from app.infrastructure.cdc_poller import get_cdc_poller
+from app.infrastructure.code_executor import code_executor
+from app.infrastructure.code_parser import parse_code_blocks, detect_language, should_auto_execute
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from app.interfaces.schemas import (
     AgentCreate, AgentUpdate, AgentModelUpdate,
     TaskCreate, TaskUpdate, TaskSubmit,
@@ -55,6 +65,9 @@ from app.interfaces.config_schemas import (
     EnvVarSet,
 )
 from app.interfaces.roles import get_all_roles, get_role_by_id
+
+# Collaboration engine singleton (created after opencode_adapter is imported)
+collaboration_engine = CollaborationEngine(opencode_adapter)
 
 # ─── Input Sanitization Helpers ─────────────────────────────────
 def _sanitize_string(value: str) -> str:
@@ -116,9 +129,15 @@ async def lifespan(app):
     asyncio.create_task(ws_metrics_broadcast_loop())
     asyncio.create_task(hermes.start_mock_activity())
 
+    # Start CDC poller for real-time change streaming
+    cdc = get_cdc_poller()
+    asyncio.create_task(cdc.start())
+
     yield
 
     # Shutdown (cleanup if needed)
+    cdc = get_cdc_poller()
+    await cdc.stop()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -146,8 +165,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Accept"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-API-Key", "Accept"],
 )
 
 # ─── Security Headers Middleware ──────────────────────────────────
@@ -193,8 +212,65 @@ async def rate_limit_middleware(request: Request, call_next):
 
     return response
 
+# ─── Authentication Middleware ─────────────────────────────────────
+# Public endpoints that do NOT require authentication
+_PUBLIC_PATHS = {
+    "/health",
+    "/auth/login",
+    "/auth/refresh",
+    "/events",
+    "/cdc/status",
+}
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Require authentication on all endpoints except public ones.
+    Supports both JWT Bearer tokens and X-API-Key header for programmatic access."""
+    # Skip for WebSocket upgrades (handled separately)
+    if request.headers.get("upgrade", "").lower() == "websocket":
+        return await call_next(request)
+
+    # Skip for OPTIONS requests (CORS preflight)
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    # Allow public endpoints without auth
+    path = request.url.path
+    if path in _PUBLIC_PATHS:
+        return await call_next(request)
+
+    # Check for API key authentication (for programmatic / bot access)
+    api_key = request.headers.get("X-API-Key", "")
+    valid_api_key = os.getenv("API_KEY", "")
+    if api_key and valid_api_key and api_key == valid_api_key:
+        # API key is valid — treat as admin access
+        request.state.user = {"username": "api_key_user", "role": "admin"}
+        return await call_next(request)
+
+    # Check for Authorization header (JWT Bearer token)
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Not authenticated. Provide a valid Bearer token or X-API-Key header."},
+        )
+
+    # Validate the JWT token
+    token = auth_header[7:]
+    payload = validate_token(token, token_type="access")
+    if not payload:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid or expired token"},
+        )
+
+    # Store user info in request state for downstream use
+    request.state.user = {"username": payload["sub"], "role": payload.get("role", "user")}
+
+    return await call_next(request)
+
 # ─── Request Size Limit ──────────────────────────────────────────
-MAX_REQUEST_SIZE = int(os.getenv("MAX_REQUEST_SIZE", str(10 * 1024)))  # 10KB default for input validation
+MAX_REQUEST_SIZE = int(os.getenv("MAX_REQUEST_SIZE", str(100 * 1024)))  # 100KB default for input validation
 
 @app.middleware("http")
 async def request_size_limit_middleware(request: Request, call_next):
@@ -205,15 +281,19 @@ async def request_size_limit_middleware(request: Request, call_next):
     if request.url.path == "/health" or request.headers.get("upgrade", "").lower() == "websocket":
         return await call_next(request)
 
+    # Allow larger uploads for chat endpoint (10MB)
+    chat_max = 10 * 1024 * 1024  # 10MB for file uploads
+    effective_max = chat_max if request.url.path in ("/chat", "/chat/stream") else MAX_REQUEST_SIZE
+
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > MAX_REQUEST_SIZE:
+    if content_length and int(content_length) > effective_max:
         logger.warning(
             "Request body too large: %s bytes (max %s) [path=%s]",
-            content_length, MAX_REQUEST_SIZE, request.url.path,
+            content_length, effective_max, request.url.path,
         )
-        raise HTTPException(
+        return JSONResponse(
             status_code=413,
-            detail=f"Request body too large. Maximum size is {MAX_REQUEST_SIZE} bytes.",
+            content={"detail": f"Request body too large. Maximum size is {effective_max} bytes."},
         )
     return await call_next(request)
 
@@ -585,6 +665,74 @@ async def archive_memories(agent_id: str, older_than_days: int = Query(30, ge=1,
 async def consolidate_memories(agent_id: str, threshold: float = Query(0.85, ge=0.5, le=0.99)):
     """Consolidate similar memories for an agent."""
     return await memory.consolidate_similar(agent_id, threshold)
+
+
+# ─── Knowledge Base Endpoints ────────────────────────────────────
+
+@app.get("/knowledge/search")
+async def knowledge_search(
+    query: str = Query(..., min_length=1, max_length=1000, description="Search query"),
+    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
+    max_results: int = Query(10, ge=1, le=50, description="Max results"),
+):
+    """Semantic search across the knowledge base (agent memories + shared pool)."""
+    kb = get_knowledge_bridge(memory)
+    try:
+        results = await memory.semantic_search(
+            query_text=query,
+            agent_id=agent_id,
+            include_shared=True,
+            include_archived=False,
+            n_results=max_results,
+        )
+        return {
+            "results": results,
+            "count": len(results),
+            "query": query,
+            "agent_id": agent_id,
+        }
+    except Exception as e:
+        logger.warning("Knowledge search failed: %s", e)
+        return {"results": [], "count": 0, "query": query, "error": str(e)}
+
+
+class KnowledgeStoreRequest(BaseModel):
+    agent_id: str
+    mem_type: str = "fact"
+    title: str
+    body: str
+    importance: float = 0.5
+    shared: bool = False
+
+
+@app.post("/knowledge/store")
+async def knowledge_store(data: KnowledgeStoreRequest):
+    """Manually store a memory in the knowledge base."""
+    # Validate memory type
+    valid_types = {"fact", "proc", "ctx", "ref"}
+    if data.mem_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid memory type. Must be one of: {valid_types}")
+    if not data.title.strip():
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    if not data.body.strip():
+        raise HTTPException(status_code=400, detail="Body cannot be empty")
+
+    result = await memory.add_memory(
+        agent_id=data.agent_id,
+        mem_type=data.mem_type,
+        title=data.title.strip(),
+        body=data.body.strip(),
+        importance=max(0.0, min(1.0, data.importance)),
+        shared=data.shared,
+    )
+    return result
+
+
+@app.get("/knowledge/stats")
+async def knowledge_stats(agent_id: Optional[str] = Query(None)):
+    """Get knowledge base statistics, optionally filtered by agent."""
+    kb = get_knowledge_bridge(memory)
+    return await kb.get_stats(agent_id)
 
 
 # ─── Agent CRUD Endpoints ─────────────────────────────────────────
@@ -1104,8 +1252,16 @@ async def stop_task(task_id: str):
         except Exception as e:
             logger.error("Failed to signal Temporal workflow: %s", e)
 
-    # Use engine stop_task for cleanup + logging
-    await hermes.stop_task(task_id)
+    # Update task status in DB
+    task_repo.update_status(task_id, "STOPPED")
+    log_repo.create("Task stopped by user", level="WARNING", task_id=task_id, agent_id=task.get("agent_id"))
+
+    # Stop OpenCode adapter if active
+    try:
+        opencode_adapter.stop_task(task_id)
+    except Exception as e:
+        logger.debug("OpenCode stop_task cleanup: %s", e)
+
     updated_task = task_repo.get_by_id(task_id)
 
     # Create notification for stopped task
@@ -1810,6 +1966,1073 @@ async def disable_plugin(plugin_id: str):
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+
+# ─── Code Execution Endpoints ─────────────────────────────────────
+
+
+@app.post("/code/execute")
+async def code_execute_endpoint(request: Request):
+    """
+    Execute code in a sandboxed environment.
+
+    Request body:
+    {
+        "language": "python" | "shell" | "api",
+        "code": "print('hello')",
+        "timeout": 30
+    }
+    """
+    body = await request.json()
+    language = body.get("language", "").strip()
+    code = body.get("code", "").strip()
+    timeout = min(body.get("timeout", 30), 60)
+
+    if not code:
+        raise HTTPException(status_code=400, detail="Code cannot be empty")
+    if not language:
+        raise HTTPException(status_code=400, detail="Language is required")
+
+    result = await code_executor.execute_code_async(language, code, timeout)
+    return result
+
+
+@app.post("/code/parse")
+async def code_parse_endpoint(request: Request):
+    """
+    Parse code blocks from text.
+
+    Request body:
+    {
+        "text": "Here's the code:\n```python\nprint('hello')\n```"
+    }
+    """
+    body = await request.json()
+    text = body.get("text", "")
+
+    if not text:
+        return {"blocks": [], "count": 0}
+
+    blocks = parse_code_blocks(text)
+    # Add auto-execute flag
+    for block in blocks:
+        block["auto_execute"] = should_auto_execute(block["code"], block["language"])
+
+    return {"blocks": blocks, "count": len(blocks)}
+
+
+async def _process_code_blocks(response_text: str) -> list:
+    """Parse LLM response for code blocks and auto-execute safe ones.
+
+    Returns list of execution results.
+    """
+    executions = []
+    blocks = parse_code_blocks(response_text)
+
+    for block in blocks:
+        language = block["language"]
+        code = block["code"]
+
+        # Only auto-execute if the code looks safe
+        if not should_auto_execute(code, language):
+            executions.append({
+                "language": language,
+                "code": code,
+                "auto_executed": False,
+                "result": None,
+            })
+            continue
+
+        # Execute the code
+        try:
+            result = await code_executor.execute_code_async(language, code, timeout=30)
+            executions.append({
+                "language": language,
+                "code": code,
+                "auto_executed": True,
+                "result": result,
+            })
+            logger.info(
+                "Auto-executed %s code: success=%s, duration=%dms",
+                language, result.get("success"), result.get("duration_ms", 0)
+            )
+        except Exception as e:
+            logger.error("Code execution error: %s", e)
+            executions.append({
+                "language": language,
+                "code": code,
+                "auto_executed": True,
+                "result": {
+                    "success": False,
+                    "language": language,
+                    "code": code,
+                    "stdout": "",
+                    "stderr": f"Execution error: {str(e)}",
+                    "exit_code": -1,
+                    "duration_ms": 0,
+                },
+            })
+
+    return executions
+
+
+# ─── Chat / Orchestrator Endpoints ────────────────────────────────
+
+# PostgreSQL-backed conversation store (replaces in-memory dict)
+
+
+def _get_user_id(request: Request) -> str:
+    """Extract user ID from request state (set by auth middleware)."""
+    user = getattr(request.state, "user", None)
+    return user.get("username", "anonymous") if user else "anonymous"
+
+
+@app.post("/chat")
+async def chat_endpoint(
+    request: Request,
+    prompt: str = Form(...),
+    conversation_id: Optional[str] = Form(None),
+    files: Optional[List[UploadFile]] = File(None),
+):
+    """
+    Chat endpoint — accepts a text prompt and optional file attachments,
+    routes to the best-fit agent via the orchestrator, and returns the LLM-generated response.
+    Conversations are persisted in PostgreSQL.
+    """
+    # Sanitize prompt
+    prompt = _sanitize_string(prompt)
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+
+    user_id = _get_user_id(request)
+    chat_repo = get_chat_repo()
+
+    # Process uploaded files
+    file_contents = []
+    file_names = []
+    if files:
+        for f in files:
+            if f.filename:
+                file_names.append(f.filename)
+            try:
+                content = await f.read()
+                # Try to decode as text; for binary files, just note the filename
+                try:
+                    text = content.decode("utf-8", errors="ignore")
+                    file_contents.append({
+                        "filename": f.filename or "unknown",
+                        "content": text[:50000],  # Cap at 50KB of text per file
+                        "content_type": f.content_type or "application/octet-stream",
+                    })
+                except Exception:
+                    file_contents.append({
+                        "filename": f.filename or "unknown",
+                        "content": f"[Binary file: {f.filename}]",
+                        "content_type": f.content_type or "application/octet-stream",
+                    })
+            except Exception as e:
+                logger.warning("Failed to read uploaded file %s: %s", f.filename, e)
+
+    # Build enriched prompt with file context
+    enriched_prompt = prompt
+    if file_contents:
+        file_context = "\n\n--- Attached Files ---\n"
+        for fc in file_contents:
+            file_context += f"\n### {fc['filename']} ({fc['content_type']})\n```\n{fc['content'][:5000]}\n```\n"
+        enriched_prompt = prompt + file_context
+
+    # Get conversation history for context
+    history = []
+    if conversation_id and chat_repo.conversation_exists(conversation_id):
+        history = chat_repo.get_conversation_history_for_context(conversation_id, limit=10)
+
+    # Check if multi-agent collaboration is needed
+    collaboration_agents = determine_collaboration(enriched_prompt)
+
+    if collaboration_agents:
+        # Multi-agent collaboration path
+        logger.info("Collaboration triggered for prompt: %s (agents: %s)", prompt[:80], collaboration_agents)
+        collab_result = await collaboration_engine.collaborate(
+            prompt=enriched_prompt,
+            agent_ids=collaboration_agents,
+            history=history,
+        )
+
+        # Persist conversation in PostgreSQL
+        conv_id = conversation_id
+        if not conv_id or not chat_repo.conversation_exists(conv_id):
+            conv_id = chat_repo.create_conversation(user_id=user_id)
+
+        chat_repo.add_message(
+            conversation_id=conv_id,
+            role="user",
+            content=prompt,
+            files=file_names if file_names else None,
+        )
+        chat_repo.add_message(
+            conversation_id=conv_id,
+            role="agent",
+            content=collab_result["response"],
+            agent_name="COLLABORATION",
+            agent_role="Multi-Agent",
+        )
+
+        return {
+            "agent": "hilman",
+            "agent_name": "COLLABORATION",
+            "agent_role": "Multi-Agent Collaboration",
+            "agent_color": "#00D4AA",
+            "response": collab_result["response"],
+            "collaboration": True,
+            "agents": collab_result["agents"],
+            "primary_agent": collab_result["primary_agent"],
+            "files_processed": file_names,
+            "conversation_id": conv_id,
+        }
+
+    # Single-agent path (existing behavior)
+    agent_id = determine_agent(enriched_prompt)
+    agent_info = get_agent_info(agent_id)
+
+    # Generate agent response via LLM
+    response_text = await _generate_agent_response(
+        agent_id, agent_info, enriched_prompt, file_contents, history
+    )
+
+    # Auto-store conversation knowledge (non-blocking)
+    try:
+        kb = get_knowledge_bridge(memory)
+        await kb.auto_store_conversation(agent_id, prompt, response_text)
+    except Exception as e:
+        logger.debug("Knowledge auto-store skipped: %s", e)
+
+    # Persist conversation in PostgreSQL
+    conv_id = conversation_id
+    if not conv_id or not chat_repo.conversation_exists(conv_id):
+        conv_id = chat_repo.create_conversation(user_id=user_id)
+
+    # Store user message
+    chat_repo.add_message(
+        conversation_id=conv_id,
+        role="user",
+        content=prompt,
+        files=file_names if file_names else None,
+    )
+
+    # Store agent response
+    chat_repo.add_message(
+        conversation_id=conv_id,
+        role="agent",
+        content=response_text,
+        agent_name=agent_info["name"],
+        agent_role=agent_info["role"],
+    )
+
+    # Process code blocks in response
+    executions = await _process_code_blocks(response_text)
+
+    return {
+        "agent": agent_id,
+        "agent_name": agent_info["name"],
+        "agent_role": agent_info["role"],
+        "agent_color": agent_info["color"],
+        "response": response_text,
+        "files_processed": file_names,
+        "conversation_id": conv_id,
+        "executions": executions,
+    }
+
+
+@app.post("/chat/stream")
+async def chat_stream_endpoint(
+    request: Request,
+    prompt: str = Form(...),
+    conversation_id: Optional[str] = Form(None),
+    files: Optional[List[UploadFile]] = File(None),
+):
+    """
+    Streaming chat endpoint — same as /chat but returns Server-Sent Events (SSE)
+    with tokens arriving one by one for real-time feedback.
+    """
+    prompt = _sanitize_string(prompt)
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+
+    user_id = _get_user_id(request)
+    chat_repo = get_chat_repo()
+
+    # Process uploaded files
+    file_contents = []
+    file_names = []
+    if files:
+        for f in files:
+            if f.filename:
+                file_names.append(f.filename)
+            try:
+                content = await f.read()
+                try:
+                    text = content.decode("utf-8", errors="ignore")
+                    file_contents.append({
+                        "filename": f.filename or "unknown",
+                        "content": text[:50000],
+                        "content_type": f.content_type or "application/octet-stream",
+                    })
+                except Exception:
+                    file_contents.append({
+                        "filename": f.filename or "unknown",
+                        "content": f"[Binary file: {f.filename}]",
+                        "content_type": f.content_type or "application/octet-stream",
+                    })
+            except Exception as e:
+                logger.warning("Failed to read uploaded file %s: %s", f.filename, e)
+
+    # Build enriched prompt with file context
+    enriched_prompt = prompt
+    if file_contents:
+        file_context = "\n\n--- Attached Files ---\n"
+        for fc in file_contents:
+            file_context += f"\n### {fc['filename']} ({fc['content_type']})\n```\n{fc['content'][:5000]}\n```\n"
+        enriched_prompt = prompt + file_context
+
+    # Get conversation history for context
+    history = []
+    if conversation_id and chat_repo.conversation_exists(conversation_id):
+        history = chat_repo.get_conversation_history_for_context(conversation_id, limit=10)
+
+    # Check if multi-agent collaboration is needed
+    collaboration_agents = determine_collaboration(enriched_prompt)
+
+    if collaboration_agents:
+        # Multi-agent collaboration — use the collaboration engine
+        logger.info("Streaming collaboration triggered: %s (agents: %s)", prompt[:80], collaboration_agents)
+
+        async def collab_generate():
+            """SSE generator for multi-agent collaboration."""
+            full_response = ""
+            collab_agents_data = []
+
+            # Send collaboration start event
+            yield f"data: {json.dumps({'event': 'collaboration_start', 'agents': [{'id': aid, 'name': get_agent_info(aid)['name']} for aid in collaboration_agents]})}\n\n"
+
+            try:
+                collab_result = await collaboration_engine.collaborate(
+                    prompt=enriched_prompt,
+                    agent_ids=collaboration_agents,
+                    history=history,
+                )
+
+                full_response = collab_result["response"]
+                collab_agents_data = collab_result["agents"]
+
+                # Send each agent's contribution as a chunk
+                for agent_data in collab_result["agents"]:
+                    yield f"data: {json.dumps({'event': 'agent_completed', 'agent_id': agent_data['id'], 'agent_name': agent_data['name'], 'agent_color': agent_data.get('color', '#6B7280'), 'subtask': agent_data.get('subtask', ''), 'response': agent_data.get('response', '')})}\n\n"
+
+                # Send the full combined response as streaming chunks
+                chunk_size = 50
+                for i in range(0, len(full_response), chunk_size):
+                    chunk = full_response[i:i + chunk_size]
+                    yield f"data: {json.dumps({'chunk': chunk, 'agent': 'hilman', 'agent_name': 'COLLABORATION', 'agent_role': 'Multi-Agent Collaboration', 'agent_color': '#00D4AA', 'collaboration': True, 'agents': collab_agents_data})}\n\n"
+
+                # Done signal
+                yield f"data: {json.dumps({'done': True, 'agent': 'hilman', 'agent_name': 'COLLABORATION', 'agent_role': 'Multi-Agent Collaboration', 'agent_color': '#00D4AA', 'collaboration': True, 'agents': collab_agents_data, 'primary_agent': 'hilman'})}\n\n"
+
+            except Exception as e:
+                logger.error("Collaboration streaming error: %s", e)
+                error_text = f"\n\n⚠️ Collaboration error: {str(e)}"
+                yield f"data: {json.dumps({'chunk': error_text, 'agent': 'hilman', 'agent_name': 'COLLABORATION'})}\n\n"
+                yield f"data: {json.dumps({'done': True, 'error': str(e), 'agent': 'hilman'})}\n\n"
+
+            # Persist conversation in PostgreSQL
+            try:
+                conv_id = conversation_id
+                if not conv_id or not chat_repo.conversation_exists(conv_id):
+                    conv_id = chat_repo.create_conversation(user_id=user_id)
+
+                chat_repo.add_message(
+                    conversation_id=conv_id,
+                    role="user",
+                    content=prompt,
+                    files=file_names if file_names else None,
+                )
+                chat_repo.add_message(
+                    conversation_id=conv_id,
+                    role="agent",
+                    content=full_response,
+                    agent_name="COLLABORATION",
+                    agent_role="Multi-Agent",
+                )
+                yield f"data: {json.dumps({'conversation_id': conv_id})}\n\n"
+            except Exception as e:
+                logger.warning("Failed to persist collaboration conversation: %s", e)
+
+        return StreamingResponse(
+            collab_generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # Single-agent streaming path (existing behavior)
+    agent_id = determine_agent(enriched_prompt)
+    agent_info = get_agent_info(agent_id)
+
+    # Get conversation history for context
+    history = []
+    if conversation_id and chat_repo.conversation_exists(conversation_id):
+        history = chat_repo.get_conversation_history_for_context(conversation_id, limit=10)
+
+    # Build messages array with conversation history
+    agent_name = agent_info["name"]
+    agent_role = agent_info["role"]
+
+    # Enhance system prompt with knowledge from memory
+    base_system_prompt = get_base_system_prompt(agent_id)
+    kb = get_knowledge_bridge(memory)
+    system_prompt = await kb.get_enhanced_system_prompt(
+        agent_id, prompt, base_system_prompt, max_memories=5
+    )
+
+    # Track whether knowledge was used (for frontend indicator)
+    knowledge_used = system_prompt != base_system_prompt
+    knowledge_context = ""
+    if knowledge_used:
+        # Extract just the knowledge section for the frontend
+        kb_start = system_prompt.find("## Relevant Knowledge from Memory")
+        if kb_start >= 0:
+            knowledge_context = system_prompt[kb_start:]
+
+    model = "minimax-m3"
+    try:
+        from app.infrastructure.agent_repository_pg import AgentRepository
+        agent_repo = AgentRepository()
+        all_agents = agent_repo.get_all()
+        for a in all_agents:
+            if a["name"].upper() == agent_name.upper():
+                model = a["model"]
+                break
+    except Exception as e:
+        logger.debug("Could not look up agent model, using default: %s", e)
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    if history:
+        for msg in history[-10:]:
+            messages.append(msg)
+    messages.append({"role": "user", "content": enriched_prompt})
+
+    async def generate():
+        """SSE generator that streams LLM tokens."""
+        full_response = ""
+        try:
+            async for chunk in opencode_adapter.stream_chat(
+                messages=messages,
+                model=model,
+                temperature=0.7,
+                max_tokens=4096,
+            ):
+                full_response += chunk
+                yield f"data: {json.dumps({'chunk': chunk, 'agent': agent_id, 'agent_name': agent_name, 'agent_role': agent_role, 'agent_color': agent_info['color']})}\n\n"
+
+            # Send done signal with knowledge metadata
+            done_data = {
+                'done': True,
+                'agent': agent_id,
+                'agent_name': agent_name,
+                'agent_role': agent_role,
+                'agent_color': agent_info['color'],
+                'knowledge_used': knowledge_used,
+            }
+            yield f"data: {json.dumps(done_data)}\n\n"
+
+            # Process code blocks and send execution results
+            executions = await _process_code_blocks(full_response)
+            if executions:
+                yield f"data: {json.dumps({'executions': executions})}\n\n"
+
+        except Exception as e:
+            logger.error("Streaming error for agent %s: %s", agent_name, e)
+            # Send error as a chunk so the client can display it
+            error_text = f"\n\n⚠️ Streaming error: {str(e)}"
+            yield f"data: {json.dumps({'chunk': error_text, 'agent': agent_id, 'agent_name': agent_name, 'agent_role': agent_role, 'agent_color': agent_info['color']})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'error': str(e), 'agent': agent_id})}\n\n"
+
+        # Auto-store conversation knowledge (non-blocking)
+        try:
+            await kb.auto_store_conversation(agent_id, prompt, full_response)
+        except Exception as e:
+            logger.debug("Knowledge auto-store skipped: %s", e)
+
+        # Persist conversation in PostgreSQL after streaming completes
+        try:
+            conv_id = conversation_id
+            if not conv_id or not chat_repo.conversation_exists(conv_id):
+                conv_id = chat_repo.create_conversation(user_id=user_id)
+
+            chat_repo.add_message(
+                conversation_id=conv_id,
+                role="user",
+                content=prompt,
+                files=file_names if file_names else None,
+            )
+            chat_repo.add_message(
+                conversation_id=conv_id,
+                role="agent",
+                content=full_response,
+                agent_name=agent_name,
+                agent_role=agent_role,
+            )
+            # Send conversation_id so frontend can track it
+            yield f"data: {json.dumps({'conversation_id': conv_id})}\n\n"
+        except Exception as e:
+            logger.warning("Failed to persist streamed conversation: %s", e)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ─── Agent system prompts for LLM ────────────────────────────────
+AGENT_SYSTEM_PROMPTS = {
+    "hilman": (
+        "You are HILMAN, a Project Manager AI agent. Your responsibilities include:\n"
+        "- Breaking down requirements into actionable tasks\n"
+        "- Creating project plans, timelines, and roadmaps\n"
+        "- Prioritizing work and coordinating team efforts\n"
+        "- Writing PRDs, specifications, and documentation\n"
+        "- Risk assessment and mitigation planning\n\n"
+        "Always provide structured, actionable responses. Use markdown formatting. "
+        "When asked to create plans, include timelines, milestones, and task assignments."
+    ),
+    "bahlul": (
+        "You are BAHLUL, a Senior Backend Developer AI agent. Your expertise includes:\n"
+        "- Python, FastAPI, Node.js, Express, Django, Flask\n"
+        "- PostgreSQL, Redis, MongoDB, SQL optimization\n"
+        "- REST API design, GraphQL, WebSocket\n"
+        "- Docker, Kubernetes, CI/CD pipelines\n"
+        "- Authentication (JWT, OAuth), security best practices\n"
+        "- Microservices architecture, system design\n\n"
+        "Write clean, production-ready code with proper error handling. "
+        "Always include type hints and docstrings in Python code. "
+        "Explain your technical decisions briefly."
+    ),
+    "deden": (
+        "You are DEDEN, a Frontend Developer AI agent. Your expertise includes:\n"
+        "- React, Next.js, TypeScript, Tailwind CSS\n"
+        "- Component architecture, state management (Redux, Zustand)\n"
+        "- Responsive design, accessibility (a11y)\n"
+        "- API integration, data fetching (SWR, React Query)\n"
+        "- Performance optimization, lazy loading\n\n"
+        "Write clean, reusable components with TypeScript. "
+        "Follow modern React patterns (hooks, functional components). "
+        "Use Tailwind CSS for styling unless told otherwise."
+    ),
+    "teddy": (
+        "You are TEDDY, a Frontend/Design Developer AI agent. Your expertise includes:\n"
+        "- UI/UX design, design systems, component libraries\n"
+        "- CSS animations, transitions, micro-interactions\n"
+        "- Figma-to-code conversion, pixel-perfect implementation\n"
+        "- Visual hierarchy, typography, color theory\n"
+        "- Dark mode, theming, responsive layouts\n\n"
+        "Focus on visual quality and user experience. "
+        "Pay attention to spacing, alignment, and consistency. "
+        "Create smooth, purposeful animations."
+    ),
+    "budi": (
+        "You are BUDI, a QA Engineer AI agent. Your expertise includes:\n"
+        "- Unit testing (pytest, Jest, Vitest)\n"
+        "- Integration testing, end-to-end testing (Playwright, Cypress)\n"
+        "- Test planning, test case design, boundary analysis\n"
+        "- Code coverage analysis, regression testing\n"
+        "- CI/CD quality gates, automated testing pipelines\n\n"
+        "Write comprehensive tests with clear descriptions. "
+        "Cover edge cases and error scenarios. "
+        "Follow the AAA pattern (Arrange, Act, Assert)."
+    ),
+}
+
+
+async def _generate_agent_response(
+    agent_id: str,
+    agent_info: dict,
+    prompt: str,
+    file_contents: list,
+    history: list = None,
+) -> str:
+    """
+    Generate a response from the agent by calling the LLM via OpenCode adapter.
+
+    Falls back to a simple acknowledgment if the LLM call fails.
+    """
+    agent_name = agent_info["name"]
+    agent_role = agent_info["role"]
+
+    # Build system prompt for this agent with knowledge enhancement
+    base_system_prompt = get_base_system_prompt(agent_id)
+    kb = get_knowledge_bridge(memory)
+    system_prompt = await kb.get_enhanced_system_prompt(
+        agent_id, prompt, base_system_prompt, max_memories=5
+    )
+
+    # Get the agent's configured model from the database
+    model = "minimax-m3"  # default
+    try:
+        from app.infrastructure.agent_repository_pg import AgentRepository
+        agent_repo = AgentRepository()
+        # Look up agent by name (the routing agents use fixed IDs)
+        all_agents = agent_repo.get_all()
+        for a in all_agents:
+            if a["name"].upper() == agent_name.upper():
+                model = a["model"]
+                break
+    except Exception as e:
+        logger.debug("Could not look up agent model, using default: %s", e)
+
+    # Build messages array with conversation history
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+
+    # Add conversation history for context
+    if history:
+        for msg in history[-10:]:  # Last 10 messages for context
+            messages.append(msg)
+
+    messages.append({"role": "user", "content": prompt})
+
+    # Call the LLM via the adapter (passes full messages array with history)
+    try:
+        task_id = f"chat_{uuid.uuid4().hex[:8]}"
+        result = await opencode_adapter.execute_task(
+            task_id=task_id,
+            prompt=prompt,
+            model=model,
+            system_prompt=system_prompt,
+            temperature=0.7,
+            max_tokens=4096,
+            messages=messages,  # Pass the full messages array with history
+        )
+
+        if result.get("success") and result.get("content"):
+            logger.info(
+                "LLM response generated for agent %s (model=%s, tokens=%d+%d)",
+                agent_name, model,
+                result.get("input_tokens", 0), result.get("output_tokens", 0),
+            )
+            return result["content"]
+        else:
+            error_msg = result.get("error", "Unknown error")
+            logger.warning("LLM call failed for agent %s: %s", agent_name, error_msg)
+            # Fall through to fallback
+
+    except Exception as e:
+        logger.error("Exception calling LLM for agent %s: %s", agent_name, e)
+        # Fall through to fallback
+
+    # Fallback: structured acknowledgment (if LLM is unavailable)
+    has_files = len(file_contents) > 0
+    file_note = ""
+    if has_files:
+        file_names = [f["filename"] for f in file_contents]
+        file_note = f"\n\n📎 I've reviewed the attached file(s): {', ', file_names}."
+
+    # Check which providers are available for a helpful error message
+    available = opencode_adapter.get_available_providers()
+    if available:
+        provider_hint = (
+            f"Available providers: {', '.join(available)}. "
+            f"The LLM API returned an error. Possible causes: "
+            f"invalid/expired API key, rate limiting, or the model '{model}' "
+            f"may not be available. Check backend logs for details."
+        )
+    else:
+        provider_hint = (
+            "No LLM API keys are configured or all keys are placeholder values. "
+            "Set at least one of: OPENROUTER_API_KEY, OPENAI_API_KEY, "
+            "ANTHROPIC_API_KEY, or OPENCODE_API_KEY + OPENCODE_API_URL "
+            "in your .env.staging file and restart the backend."
+        )
+
+    return (
+        f"**{agent_name} — {agent_role}** here.\n\n"
+        f"I received your request and I'm processing it. "
+        f"The LLM service encountered an error.\n\n"
+        f"**Details:** {provider_hint}\n\n"
+        f"**Your request:** {prompt[:200]}{'...' if len(prompt) > 200 else ''}\n"
+        f"{file_note}\n\n"
+        f"*Please configure an API key and try again.*"
+    )
+
+
+@app.get("/chat/agents")
+async def get_chat_agents():
+    """Get all available chat agents for the frontend."""
+    return {"agents": get_all_agents()}
+
+
+@app.post("/chat/collaborate")
+async def chat_collaborate_endpoint(
+    request: Request,
+    prompt: str = Form(...),
+    agent_ids: Optional[str] = Form(None),
+    conversation_id: Optional[str] = Form(None),
+    files: Optional[List[UploadFile]] = File(None),
+):
+    """
+    Explicit multi-agent collaboration endpoint.
+
+    Accepts a prompt and optional list of agent IDs to collaborate.
+    Dispatches sub-tasks to all agents in parallel and returns combined results.
+    """
+    prompt = _sanitize_string(prompt)
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+
+    user_id = _get_user_id(request)
+    chat_repo = get_chat_repo()
+
+    # Process uploaded files
+    file_contents = []
+    file_names = []
+    if files:
+        for f in files:
+            if f.filename:
+                file_names.append(f.filename)
+            try:
+                content = await f.read()
+                try:
+                    text = content.decode("utf-8", errors="ignore")
+                    file_contents.append({
+                        "filename": f.filename or "unknown",
+                        "content": text[:50000],
+                        "content_type": f.content_type or "application/octet-stream",
+                    })
+                except Exception:
+                    file_contents.append({
+                        "filename": f.filename or "unknown",
+                        "content": f"[Binary file: {f.filename}]",
+                        "content_type": f.content_type or "application/octet-stream",
+                    })
+            except Exception as e:
+                logger.warning("Failed to read uploaded file %s: %s", f.filename, e)
+
+    # Build enriched prompt
+    enriched_prompt = prompt
+    if file_contents:
+        file_context = "\n\n--- Attached Files ---\n"
+        for fc in file_contents:
+            file_context += f"\n### {fc['filename']} ({fc['content_type']})\n```\n{fc['content'][:5000]}\n```\n"
+        enriched_prompt = prompt + file_context
+
+    # Get conversation history
+    history = []
+    if conversation_id and chat_repo.conversation_exists(conversation_id):
+        history = chat_repo.get_conversation_history_for_context(conversation_id, limit=10)
+
+    # Parse agent IDs if provided
+    parsed_agent_ids = None
+    if agent_ids:
+        parsed_agent_ids = [aid.strip().lower() for aid in agent_ids.split(",") if aid.strip()]
+        # Validate agent IDs
+        valid_ids = set(AGENT_ROUTES.keys())
+        parsed_agent_ids = [aid for aid in parsed_agent_ids if aid in valid_ids]
+        if not parsed_agent_ids:
+            parsed_agent_ids = None
+
+    # Execute collaboration
+    collab_result = await collaboration_engine.collaborate(
+        prompt=enriched_prompt,
+        agent_ids=parsed_agent_ids,
+        history=history,
+    )
+
+    # Persist conversation
+    conv_id = conversation_id
+    if not conv_id or not chat_repo.conversation_exists(conv_id):
+        conv_id = chat_repo.create_conversation(user_id=user_id)
+
+    chat_repo.add_message(
+        conversation_id=conv_id,
+        role="user",
+        content=prompt,
+        files=file_names if file_names else None,
+    )
+    chat_repo.add_message(
+        conversation_id=conv_id,
+        role="agent",
+        content=collab_result["response"],
+        agent_name="COLLABORATION",
+        agent_role="Multi-Agent",
+    )
+
+    return {
+        "response": collab_result["response"],
+        "collaboration": True,
+        "agents": collab_result["agents"],
+        "primary_agent": collab_result["primary_agent"],
+        "agent_count": collab_result["agent_count"],
+        "files_processed": file_names,
+        "conversation_id": conv_id,
+    }
+
+
+@app.get("/chat/conversations")
+async def list_conversations(request: Request):
+    """List all conversations for the current user."""
+    user_id = _get_user_id(request)
+    chat_repo = get_chat_repo()
+    conversations = chat_repo.list_conversations(user_id)
+    return {"conversations": conversations}
+
+
+@app.get("/chat/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """Get conversation history from PostgreSQL."""
+    chat_repo = get_chat_repo()
+    if not chat_repo.conversation_exists(conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    messages = chat_repo.get_messages(conversation_id)
+    return {
+        "conversation_id": conversation_id,
+        "messages": messages,
+    }
+
+
+@app.delete("/chat/conversations/{conversation_id}")
+async def delete_conversation_endpoint(conversation_id: str, request: Request):
+    """Delete a conversation and all its messages."""
+    chat_repo = get_chat_repo()
+    if not chat_repo.conversation_exists(conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    chat_repo.delete_conversation(conversation_id)
+    return {"status": "ok", "message": "Conversation deleted"}
+
+
+@app.patch("/chat/conversations/{conversation_id}")
+async def update_conversation_endpoint(conversation_id: str, request: Request):
+    """Update a conversation (rename)."""
+    chat_repo = get_chat_repo()
+    if not chat_repo.conversation_exists(conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    body = await request.json()
+    title = body.get("title", "")
+    chat_repo.rename_conversation(conversation_id, title)
+    return {"status": "ok", "message": "Conversation updated"}
+
+
+# ─── CDC SSE Endpoint ───────────────────────────────────────────
+
+# ─── CDC API Endpoints ──────────────────────────────────────────
+
+@app.get("/cdc/changes")
+async def cdc_get_changes(
+    request: Request,
+    table: Optional[str] = Query(None, description="Filter by table name"),
+    limit: int = Query(100, ge=1, le=1000, description="Max entries to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+):
+    """Query change_log entries with optional table filter and pagination.
+
+    Returns CDC changes from the database change_log table.
+    Requires authentication.
+    """
+    try:
+        cdc = get_cdc_poller()
+        pool = cdc._pool
+
+        if table:
+            result = pool.execute(
+                """
+                SELECT seq, table_name, row_id, operation,
+                       old_data, new_data, created_at
+                FROM change_log
+                WHERE table_name = %s
+                ORDER BY seq DESC
+                LIMIT %s OFFSET %s
+                """,
+                (table, limit, offset),
+            )
+            count_result = pool.execute(
+                "SELECT COUNT(*) AS total FROM change_log WHERE table_name = %s",
+                (table,),
+            )
+        else:
+            result = pool.execute(
+                """
+                SELECT seq, table_name, row_id, operation,
+                       old_data, new_data, created_at
+                FROM change_log
+                ORDER BY seq DESC
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset),
+            )
+            count_result = pool.execute(
+                "SELECT COUNT(*) AS total FROM change_log",
+            )
+
+        changes = []
+        if result:
+            for row in result:
+                changes.append({
+                    "seq": row["seq"],
+                    "table": row["table_name"],
+                    "row_id": row["row_id"],
+                    "operation": row["operation"],
+                    "old_data": row["old_data"],
+                    "new_data": row["new_data"],
+                    "timestamp": row["created_at"].isoformat() if row["created_at"] else None,
+                })
+
+        total = count_result[0]["total"] if count_result else 0
+
+        return {
+            "changes": changes,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + limit) < total,
+        }
+    except Exception as e:
+        logger.error("CDC changes query failed: %s", e)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Failed to query changes: {str(e)}"},
+        )
+
+
+@app.get("/cdc/status")
+async def cdc_get_status():
+    """Get CDC pipeline status.
+
+    Returns the current state of the CDC poller, including:
+    - Whether the poller is running
+    - Current sequence number
+    - Number of active subscribers
+    - Total change_log entries
+    - Tracked tables
+
+    No authentication required (diagnostic endpoint).
+    """
+    try:
+        cdc = get_cdc_poller()
+        pool = cdc._pool
+
+        # Get total entries in change_log
+        total_result = pool.execute(
+            "SELECT COUNT(*) AS total FROM change_log"
+        )
+        total_entries = total_result[0]["total"] if total_result else 0
+
+        # Get latest seq
+        max_seq_result = pool.execute(
+            "SELECT COALESCE(MAX(seq), 0) AS max_seq FROM change_log"
+        )
+        max_seq = max_seq_result[0]["max_seq"] if max_seq_result else 0
+
+        # Get table breakdown
+        tables_result = pool.execute(
+            """
+            SELECT table_name, COUNT(*) AS count,
+                   MAX(created_at) AS last_change
+            FROM change_log
+            GROUP BY table_name
+            ORDER BY count DESC
+            """
+        )
+        tables = []
+        if tables_result:
+            for row in tables_result:
+                tables.append({
+                    "table": row["table_name"],
+                    "count": row["count"],
+                    "last_change": row["last_change"].isoformat() if row["last_change"] else None,
+                })
+
+        return {
+            "poller_running": cdc._running,
+            "current_seq": cdc._last_seq,
+            "max_seq_in_db": max_seq,
+            "subscribers": len(cdc._subscribers),
+            "poll_interval": cdc._poll_interval,
+            "total_entries": total_entries,
+            "tracked_tables": tables,
+            "change_log_exists": True,
+        }
+    except Exception as e:
+        logger.error("CDC status query failed: %s", e)
+        return {
+            "poller_running": False,
+            "current_seq": 0,
+            "max_seq_in_db": 0,
+            "subscribers": 0,
+            "poll_interval": 0.2,
+            "total_entries": 0,
+            "tracked_tables": [],
+            "change_log_exists": False,
+            "error": str(e),
+        }
+
+
+@app.get("/events")
+async def sse_events(request: Request, token: Optional[str] = Query(None)):
+    """Server-Sent Events endpoint for real-time CDC updates.
+
+    Connects clients to the CDC pipeline so they receive instant
+    notifications when any tracked table changes.
+
+    Auth: pass ?token=<jwt> in the URL (EventSource can't set headers).
+    """
+    # Validate token from query param or Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        jwt_token = auth_header[7:]
+    elif token:
+        jwt_token = token
+    else:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    payload = validate_token(jwt_token, token_type="access")
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    cdc = get_cdc_poller()
+    queue = cdc.subscribe()
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=25.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    # Keepalive comment to prevent proxy/LB timeouts
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            cdc.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 if __name__ == "__main__":

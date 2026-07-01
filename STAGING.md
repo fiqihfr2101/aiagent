@@ -29,6 +29,7 @@ bash scripts/promote-to-production.sh
 | Temporal     | `localhost:7233` | `localhost:7234` |
 | Temporal UI  | `localhost:8080` | `localhost:8081` |
 | PostgreSQL   | `localhost:5432` | `localhost:5433` |
+| Replica DB   | `localhost:5434` | N/A              |
 
 ## Architecture
 
@@ -42,7 +43,11 @@ Production                      Staging
 │  Temporal    │ :7233          │  Temporal    │ :7234
 │  Temporal UI │ :8080          │  Temporal UI │ :8081
 │  PostgreSQL  │ :5432 (hermes) │  PostgreSQL  │ :5433 (hermes_staging)
+│  Replica DB  │ :5434 (read-only) │             │
 └──────────────┘                └──────────────┘
+
+Replica DB mirrors prod-db via PostgreSQL streaming replication.
+Writes go to primary (5432), reads can be served from replica (5434).
 ```
 
 Each environment uses its own Docker network, volumes, and database. They can run simultaneously without conflicts.
@@ -58,6 +63,10 @@ Each environment uses its own Docker network, volumes, and database. They can ru
 | `scripts/setup-staging.sh` | First-time staging setup (DB, migrations, seeds) |
 | `scripts/deploy-to-staging.sh` | Build and deploy code to staging with health checks |
 | `scripts/promote-to-production.sh` | Backup production → stop → redeploy → verify |
+| `scripts/setup-replication.sh` | Configure streaming replication (primary → replica) |
+| `scripts/verify-replication.sh` | Verify replication health and data sync |
+| `scripts/promote-replica.sh` | Promote replica to primary (failover) |
+| `scripts/create-replication-user.sql` | SQL to create replication user |
 
 ---
 
@@ -139,6 +148,116 @@ Or if staging is still running, restart it as a fallback:
 
 ```bash
 docker compose -f docker-compose.staging.yml up -d
+```
+
+---
+
+## Streaming Replication (Read-Only Replica)
+
+### Overview
+
+The production environment includes a **read-only PostgreSQL replica** (`replica-db`) that mirrors the production database (`prod-db`) using **real-time streaming replication**.
+
+```
+┌─────────────────┐    WAL Stream    ┌─────────────────┐
+│    prod-db      │ ───────────────→ │    replica-db    │
+│  (Primary)      │                  │  (Read-Only)     │
+│  :5432          │                  │  :5434           │
+│  Read + Write   │                  │  Read Only       │
+└─────────────────┘                  └─────────────────┘
+```
+
+### Quick Start
+
+```bash
+# First-time setup (run after docker-compose up)
+bash scripts/setup-replication.sh
+
+# Verify replication is working
+bash scripts/verify-replication.sh
+```
+
+### How It Works
+
+1. **Primary** (`prod-db`) runs with `wal_level=replica` and accepts WAL sender connections
+2. A replication user `replicator` is created with `REPLICATION` privilege
+3. A physical replication slot `replication_slot` ensures WAL segments are retained
+4. **Replica** (`replica-db`) runs `pg_basebackup` on startup to clone the primary, then enters standby mode and streams WAL changes in real-time
+
+### Using the Replica
+
+**Read queries** (load balance reads to replica):
+```bash
+# Direct access
+docker exec replica-db psql -U replicator -d hermes -c "SELECT * FROM agents;"
+
+# Connection string for applications
+postgresql://replicator:replicator_password@localhost:5434/hermes
+```
+
+**Verify read-only:**
+```bash
+# This will fail — replica rejects writes
+docker exec replica-db psql -U replicator -d hermes -c "INSERT INTO agents VALUES (...);"
+```
+
+### Failover (Promote Replica)
+
+If the primary fails, you can promote the replica to accept writes:
+
+```bash
+bash scripts/promote-replica.sh
+```
+
+After promotion:
+- The replica becomes writable
+- Streaming replication stops
+- Update application connection strings to the new primary
+- Rebuild the old primary as a new replica
+
+### Monitoring Commands
+
+```bash
+# Check replication status from primary
+docker exec prod-db psql -U temporal -d hermes -c "SELECT * FROM pg_stat_replication;"
+
+# Check replication lag
+docker exec prod-db psql -U temporal -d hermes -c "
+SELECT client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn,
+       pg_wal_lsn_diff(sent_lsn, replay_lsn) AS lag_bytes
+FROM pg_stat_replication;"
+
+# Check WAL receiver on replica
+docker exec replica-db psql -U replicator -d hermes -c "SELECT * FROM pg_stat_wal_receiver;"
+
+# Check replication slot
+docker exec prod-db psql -U temporal -d hermes -c "SELECT * FROM pg_replication_slots;"
+```
+
+### Troubleshooting
+
+**Replica not connecting:**
+```bash
+# Check replica logs
+docker logs replica-db
+# Ensure replication user exists on primary
+docker exec prod-db psql -U temporal -d hermes -c "SELECT rolname FROM pg_roles WHERE rolreplication;"
+```
+
+**Replication lag growing:**
+```bash
+# Check WAL senders on primary
+docker exec prod-db psql -U temporal -d hermes -c "SELECT * FROM pg_stat_replication;"
+# Check network between containers
+docker exec replica-db ping prod-db
+```
+
+**Replica won't start after primary restart:**
+```bash
+# You may need to rebuild the replica
+docker compose down replica-db
+docker volume rm $(docker volume ls -q | grep replica)
+bash scripts/setup-replication.sh
 ```
 
 ---

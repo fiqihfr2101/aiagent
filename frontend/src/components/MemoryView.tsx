@@ -1,9 +1,22 @@
 'use client';
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 
 import React, { memo, useState, useEffect, useCallback } from 'react';
 import { Agent, Memory, MemoryStats } from '../types';
 import MemorySearch from './MemorySearch';
+
+interface KnowledgeSearchResult {
+  id: string;
+  agent_id: string;
+  type: string;
+  title: string;
+  body: string;
+  ts: string;
+  src: string;
+  importance: number;
+  relevance: number;
+  shared: boolean;
+}
 
 interface MemoryViewProps {
   agents: Agent[];
@@ -24,7 +37,7 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
   const [activeId, setActiveId] = useState(agents[0]?.id || 'jarvis');
   const [internalMemories, setInternalMemories] = useState<Record<string, Memory[]>>(memories);
   const [search, setSearch] = useState('');
-  const [view, setView] = useState<'list' | 'search'>('list');
+  const [view, setView] = useState<'list' | 'search' | 'knowledge'>('list');
   const [stats, setStats] = useState<MemoryStats | null>(null);
   const [showStats, setShowStats] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
@@ -33,6 +46,20 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
   const [archiving, setArchiving] = useState(false);
   const [consolidating, setConsolidating] = useState(false);
   const [actionResult, setActionResult] = useState<string | null>(null);
+
+  // Knowledge search state
+  const [kbQuery, setKbQuery] = useState('');
+  const [kbResults, setKbResults] = useState<KnowledgeSearchResult[]>([]);
+  const [kbLoading, setKbLoading] = useState(false);
+  const [kbSearched, setKbSearched] = useState(false);
+  const [kbAgentFilter, setKbAgentFilter] = useState('');
+  const [showStoreDialog, setShowStoreDialog] = useState(false);
+  const [storeTitle, setStoreTitle] = useState('');
+  const [storeBody, setStoreBody] = useState('');
+  const [storeType, setStoreType] = useState('fact');
+  const [storeImportance, setStoreImportance] = useState(0.5);
+  const [storeShared, setStoreShared] = useState(false);
+  const [storeLoading, setStoreLoading] = useState(false);
 
   // Update internal memories if prop changes
   useEffect(() => {
@@ -43,7 +70,7 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
   useEffect(() => {
     if (Object.keys(memories).length === 0) {
       const fetchMemories = async () => {
-        const resp = await fetch(`${API_BASE}/memories/${activeId}`);
+        const resp = await fetch(`${API_BASE}/memories/${activeId}`, { headers: getAuthHeaders('') });
         if (resp.ok) {
           const data = await resp.json();
           setInternalMemories(prev => ({ ...prev, [activeId]: data }));
@@ -56,7 +83,7 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
   // Fetch stats when agent changes
   const fetchStats = useCallback(async () => {
     try {
-      const resp = await fetch(`${API_BASE}/memories/${activeId}/stats`);
+      const resp = await fetch(`${API_BASE}/memories/${activeId}/stats`, { headers: getAuthHeaders('') });
       if (resp.ok) {
         const data = await resp.json();
         setStats(data);
@@ -74,12 +101,12 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
     setArchiving(true);
     setActionResult(null);
     try {
-      const resp = await fetch(`${API_BASE}/memories/${activeId}/archive?older_than_days=30`, { method: 'POST' });
+      const resp = await fetch(`${API_BASE}/memories/${activeId}/archive?older_than_days=30`, { method: 'POST', headers: getAuthHeaders('') });
       if (resp.ok) {
         const data = await resp.json();
         setActionResult(`Archived ${data.archived_count} memories`);
         // Refresh memories
-        const memResp = await fetch(`${API_BASE}/memories/${activeId}`);
+        const memResp = await fetch(`${API_BASE}/memories/${activeId}`, { headers: getAuthHeaders('') });
         if (memResp.ok) {
           const memData = await memResp.json();
           setInternalMemories(prev => ({ ...prev, [activeId]: memData }));
@@ -97,12 +124,12 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
     setConsolidating(true);
     setActionResult(null);
     try {
-      const resp = await fetch(`${API_BASE}/memories/${activeId}/consolidate`, { method: 'POST' });
+      const resp = await fetch(`${API_BASE}/memories/${activeId}/consolidate`, { method: 'POST', headers: getAuthHeaders('') });
       if (resp.ok) {
         const data = await resp.json();
         setActionResult(`Merged ${data.merged_count} similar memories (${data.memories_remaining} remaining)`);
         // Refresh memories
-        const memResp = await fetch(`${API_BASE}/memories/${activeId}`);
+         const memResp = await fetch(`${API_BASE}/memories/${activeId}`, { headers: getAuthHeaders('') });
         if (memResp.ok) {
           const memData = await memResp.json();
           setInternalMemories(prev => ({ ...prev, [activeId]: memData }));
@@ -121,7 +148,7 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
     try {
       const resp = await fetch(API_BASE + '/memories/share', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           memory_id: shareMemoryId,
           from_agent_id: activeId,
@@ -142,6 +169,71 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
       setActionResult('Share failed');
     }
   };
+
+  // Knowledge search handler
+  const handleKnowledgeSearch = useCallback(async () => {
+    if (!kbQuery.trim()) return;
+    setKbLoading(true);
+    setKbSearched(true);
+    try {
+      const params = new URLSearchParams({ query: kbQuery.trim(), max_results: '20' });
+      if (kbAgentFilter) params.append('agent_id', kbAgentFilter);
+      const resp = await fetch(API_BASE + '/knowledge/search?' + params.toString(), {
+        headers: getAuthHeaders(''),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setKbResults(data.results || []);
+      }
+    } catch (err) {
+      console.error('Knowledge search failed:', err);
+    } finally {
+      setKbLoading(false);
+    }
+  }, [kbQuery, kbAgentFilter]);
+
+  // Store memory handler
+  const handleStoreMemory = useCallback(async () => {
+    if (!storeTitle.trim() || !storeBody.trim()) return;
+    setStoreLoading(true);
+    try {
+      const resp = await fetch(API_BASE + '/knowledge/store', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          agent_id: activeId,
+          mem_type: storeType,
+          title: storeTitle.trim(),
+          body: storeBody.trim(),
+          importance: storeImportance,
+          shared: storeShared,
+        }),
+      });
+      if (resp.ok) {
+        setActionResult('Memory stored successfully');
+        setShowStoreDialog(false);
+        setStoreTitle('');
+        setStoreBody('');
+        setStoreType('fact');
+        setStoreImportance(0.5);
+        setStoreShared(false);
+        // Refresh memories
+        const memResp = await fetch(API_BASE + '/memories/' + activeId, { headers: getAuthHeaders('') });
+        if (memResp.ok) {
+          const memData = await memResp.json();
+          setInternalMemories(prev => ({ ...prev, [activeId]: memData }));
+        }
+        fetchStats();
+      } else {
+        const err = await resp.json();
+        setActionResult('Store failed: ' + (err.detail || 'Unknown error'));
+      }
+    } catch (err) {
+      setActionResult('Store failed');
+    } finally {
+      setStoreLoading(false);
+    }
+  }, [storeTitle, storeBody, storeType, storeImportance, storeShared, activeId, fetchStats]);
 
   const activeAgent = agents.find(a => a.id === activeId);
   const agentMemories = internalMemories[activeId] || [];
@@ -212,6 +304,12 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
               >
                 Search
               </button>
+              <button
+                className={`px-2.5 py-1 text-[10px] font-medium transition-all border-l border-border-custom ${view === 'knowledge' ? 'bg-[rgba(0,212,170,0.1)] text-cyan-custom' : 'bg-bg3 text-txt2 hover:bg-bg4'}`}
+                onClick={() => setView('knowledge')}
+              >
+                📚 Knowledge
+              </button>
             </div>
             <input 
               className={`flex-1 max-w-[320px] bg-bg3 border border-border-custom rounded-[7px] text-txt px-[11px] py-1.5 text-[11px] font-sans outline-none focus:border-[rgba(0,212,170,0.35)] ${view === 'search' ? 'hidden' : ''}`} 
@@ -224,8 +322,11 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
               Sync Gobrain
             </button>
             <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium cursor-pointer border border-border2 bg-bg3 text-txt hover:bg-bg4 transition-all duration-150" onClick={() => onAdd(activeId)}>
-              <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-[13px] h-[13px] stroke-current"><path d="M12 5v14M5 12h14"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-[13px] h-[13px] stroke-current"><path d="M12 5v14M5 12h14" /></svg>
               Add memory
+            </button>
+            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-medium cursor-pointer border border-[rgba(168,85,247,0.28)] bg-[rgba(168,85,247,0.08)] text-[#C4B5FD] hover:bg-bg4 transition-all duration-150" onClick={() => setShowStoreDialog(true)}>
+              📚 Store Knowledge
             </button>
           </div>
         </div>
@@ -297,6 +398,110 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
         {/* Content Area */}
         {view === 'search' ? (
           <MemorySearch agents={agents} />
+        ) : view === 'knowledge' ? (
+          /* Knowledge Search View */
+          <div className="flex flex-col h-full overflow-hidden">
+            {/* Knowledge Search Header */}
+            <div className="flex-shrink-0 p-5 border-b border-border-custom bg-bg2">
+              <div className="text-[13px] font-bold mb-1">📚 Knowledge Base Search</div>
+              <div className="text-[10px] text-txt3 mb-3">Search across all agent memories and shared knowledge pool</div>
+              <div className="flex gap-2 mb-3">
+                <input
+                  className="flex-1 bg-bg3 border border-border-custom rounded-[7px] text-txt px-3 py-2 text-[12px] font-sans outline-none focus:border-[rgba(0,212,170,0.35)]"
+                  placeholder="Search knowledge base..."
+                  value={kbQuery}
+                  onChange={(e) => setKbQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleKnowledgeSearch(); }}
+                />
+                <select
+                  className="bg-bg3 border border-border-custom rounded-[5px] text-txt px-2 py-2 text-[10px] outline-none focus:border-[rgba(0,212,170,0.35)]"
+                  value={kbAgentFilter}
+                  onChange={(e) => setKbAgentFilter(e.target.value)}
+                >
+                  <option value="">All agents</option>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+                <button
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-md text-[11px] font-medium cursor-pointer border border-[rgba(0,212,170,0.28)] bg-[rgba(0,212,170,0.08)] text-cyan-custom hover:bg-bg4 transition-all duration-150 disabled:opacity-50"
+                  onClick={handleKnowledgeSearch}
+                  disabled={kbLoading || !kbQuery.trim()}
+                >
+                  {kbLoading ? (
+                    <svg className="w-[13px] h-[13px] animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity="0.3" /><path d="M12 2a10 10 0 0 1 10 10" /></svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" className="w-[13px] h-[13px] stroke-current"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg>
+                  )}
+                  Search
+                </button>
+              </div>
+              {kbSearched && (
+                <div className="text-[10px] text-txt3 font-mono">
+                  {kbResults.length} result{kbResults.length !== 1 ? 's' : ''} found
+                </div>
+              )}
+            </div>
+
+            {/* Knowledge Results */}
+            <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-[10px]">
+              {!kbSearched ? (
+                <div className="flex flex-col items-center justify-center h-full text-txt3">
+                  <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.2" className="w-10 h-10 stroke-current mb-3 opacity-30"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg>
+                  <div className="text-xs font-mono">Search the knowledge base for relevant memories</div>
+                  <div className="text-[10px] text-txt3 mt-1">Results are ranked by relevance and importance</div>
+                </div>
+              ) : kbLoading ? (
+                <div className="flex items-center justify-center h-full text-txt3 text-xs font-mono">Searching knowledge base...</div>
+              ) : kbResults.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-txt3 text-xs font-mono">No knowledge found matching your query</div>
+              ) : (
+                kbResults.map((m) => {
+                  const agentName = agents.find(a => a.id === m.agent_id)?.name || m.agent_id;
+                  return (
+                    <div
+                      key={m.id}
+                      className="bg-bg2 border border-border-custom rounded-xl p-[13px_15px] transition-all duration-150 hover:border-[rgba(0,212,170,0.25)] hover:bg-bg3"
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="text-xs font-medium text-txt leading-relaxed">{m.title}</div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[8px] font-semibold px-[7px] py-0.5 rounded-[5px] font-mono tracking-[0.06em] uppercase ${typeClass[m.type]}`}>{typeLabel[m.type]}</span>
+                          {m.shared && (
+                            <span className="text-[8px] font-semibold px-[7px] py-0.5 rounded-[5px] font-mono tracking-[0.06em] uppercase bg-[rgba(168,85,247,0.1)] text-[#C4B5FD] border border-[rgba(168,85,247,0.2)]">SHARED</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-[11px] text-txt2 leading-relaxed mt-[5px] line-clamp-3">{m.body}</div>
+                      <div className="flex items-center gap-[10px] mt-[9px] pt-[9px] border-t border-border-custom">
+                        <span className="text-[9px] text-txt3 font-mono">{m.ts}</span>
+                        <span className="text-[9px] text-txt3 font-mono flex items-center gap-1">
+                          <span className="w-[5px] h-[5px] rounded-full bg-[#6366F1] inline-block"></span>
+                          {agentName}
+                        </span>
+                        <div className="flex items-center gap-3 ml-auto">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[9px] text-txt3 font-mono">Relevance</span>
+                            <div className="w-[40px] h-[4px] bg-bg3 rounded-full overflow-hidden">
+                              <div className="h-full bg-cyan-custom rounded-full" style={{ width: (m.relevance * 100) + '%' }} />
+                            </div>
+                            <span className="text-[9px] text-cyan-custom font-mono">{Math.round(m.relevance * 100)}%</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[9px] text-txt3 font-mono">Importance</span>
+                            <div className="w-[40px] h-[4px] bg-bg3 rounded-full overflow-hidden">
+                              <div className="h-full bg-amb-custom rounded-full" style={{ width: (m.importance * 100) + '%' }} />
+                            </div>
+                            <span className="text-[9px] text-amb-custom font-mono">{Math.round(m.importance * 100)}%</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         ) : (
           <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-[10px]">
             {filteredMemories.length > 0 ? filteredMemories.map((m, i) => (
@@ -362,6 +567,87 @@ const MemoryView: React.FC<MemoryViewProps> = memo(({ agents, memories = {}, onS
                 disabled={!shareTargetAgent}
               >
                 Share
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Store Knowledge Dialog */}
+      {showStoreDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowStoreDialog(false)}>
+          <div className="bg-bg2 border border-border-custom rounded-xl p-5 w-[500px] shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="text-[13px] font-bold mb-4">📚 Store Knowledge</div>
+            <div className="text-[10px] text-txt3 mb-4">Manually inject knowledge into {activeAgent?.name}&apos;s memory. This will be available for future conversations.</div>
+            <div className="mb-3">
+              <label className="text-[10px] text-txt2 font-mono uppercase mb-1 block">Title</label>
+              <input
+                className="w-full bg-bg3 border border-border-custom rounded-[7px] text-txt px-3 py-2 text-[11px] outline-none focus:border-[rgba(0,212,170,0.35)]"
+                placeholder="e.g., API Authentication Pattern"
+                value={storeTitle}
+                onChange={(e) => setStoreTitle(e.target.value)}
+              />
+            </div>
+            <div className="mb-3">
+              <label className="text-[10px] text-txt2 font-mono uppercase mb-1 block">Knowledge Content</label>
+              <textarea
+                className="w-full bg-bg3 border border-border-custom rounded-[7px] text-txt px-3 py-2 text-[11px] outline-none focus:border-[rgba(0,212,170,0.35)] resize-none"
+                placeholder="Enter the knowledge to store..."
+                rows={4}
+                value={storeBody}
+                onChange={(e) => setStoreBody(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-3 mb-3">
+              <div className="flex-1">
+                <label className="text-[10px] text-txt2 font-mono uppercase mb-1 block">Type</label>
+                <select
+                  className="w-full bg-bg3 border border-border-custom rounded-[5px] text-txt px-2 py-1.5 text-[11px] outline-none focus:border-[rgba(0,212,170,0.35)]"
+                  value={storeType}
+                  onChange={(e) => setStoreType(e.target.value)}
+                >
+                  <option value="fact">Fact</option>
+                  <option value="proc">Procedure</option>
+                  <option value="ctx">Context</option>
+                  <option value="ref">Reference</option>
+                </select>
+              </div>
+              <div className="flex-1">
+                <label className="text-[10px] text-txt2 font-mono uppercase mb-1 block">Importance ({Math.round(storeImportance * 100)}%)</label>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={Math.round(storeImportance * 100)}
+                  onChange={(e) => setStoreImportance(parseInt(e.target.value) / 100)}
+                  className="w-full accent-cyan-custom"
+                />
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="flex items-center gap-1.5 text-[10px] text-txt2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={storeShared}
+                  onChange={(e) => setStoreShared(e.target.checked)}
+                  className="accent-cyan-custom"
+                />
+                Share with all agents (add to shared pool)
+              </label>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                className="px-3 py-1.5 rounded-md text-[11px] font-medium cursor-pointer border border-border2 bg-bg3 text-txt hover:bg-bg4 transition-all"
+                onClick={() => setShowStoreDialog(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-1.5 rounded-md text-[11px] font-medium cursor-pointer border border-[rgba(0,212,170,0.28)] bg-[rgba(0,212,170,0.08)] text-cyan-custom hover:bg-bg4 transition-all disabled:opacity-50"
+                onClick={handleStoreMemory}
+                disabled={storeLoading || !storeTitle.trim() || !storeBody.trim()}
+              >
+                {storeLoading ? 'Storing...' : 'Store Knowledge'}
               </button>
             </div>
           </div>

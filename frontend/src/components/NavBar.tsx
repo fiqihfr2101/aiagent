@@ -1,23 +1,38 @@
 
 import React, { memo, useState, useRef, useEffect } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 
 import CacheStatusIndicator from './CacheStatusIndicator';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 
+const NAV_TABS = [
+  { id: 'dashboard', label: 'Dashboard', path: '/dashboard' },
+  { id: 'chat', label: 'Chat', path: '/chat' },
+  { id: 'messages', label: 'Messages', path: '/messages' },
+  { id: 'memory', label: 'Memory', path: '/memory' },
+  { id: 'analytics', label: 'Analytics', path: '/analytics' },
+  { id: 'costs', label: 'Costs', path: '/costs' },
+  { id: 'workflows', label: 'Workflows', path: '/workflows' },
+  { id: 'plugins', label: 'Plugins', path: '/plugins' },
+];
+
 interface NavBarProps {
-  activeL1: string;
-  setActiveL1: (l1: string) => void;
   systemStatus: string;
   activeCount: string;
   children?: React.ReactNode;
 }
 
-const NavBar: React.FC<NavBarProps> = memo(({ activeL1, setActiveL1, systemStatus, activeCount, children }) => {
+const NavBar: React.FC<NavBarProps> = memo(({ systemStatus, activeCount, children }) => {
   const { theme, toggleTheme } = useTheme();
   const { user, logout } = useAuth();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const pathname = usePathname();
+  const router = useRouter();
+
+  // Determine active tab from pathname
+  const activeTab = NAV_TABS.find(tab => pathname.startsWith(tab.path))?.id || 'dashboard';
 
   // Close menu on outside click
   useEffect(() => {
@@ -32,7 +47,7 @@ const NavBar: React.FC<NavBarProps> = memo(({ activeL1, setActiveL1, systemStatu
 
   return (
     <nav className="flex-shrink-0 h-[44px] bg-[rgba(7,9,15,0.95)] border-b border-border-custom flex items-center px-4 gap-0 backdrop-blur-xl z-50">
-      <div className="flex items-center gap-[9px] mr-6 cursor-pointer" onClick={() => setActiveL1('overview')}>
+      <div className="flex items-center gap-[9px] mr-6 cursor-pointer" onClick={() => router.push('/dashboard')}>
         <div className="w-7 h-7 rounded-[7px] bg-[#0A1628] border border-[rgba(0,212,170,0.5)] flex items-center justify-center shadow-[0_0_10px_rgba(0,212,170,0.25)]">
           <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4 stroke-cyan-custom stroke-[1.6]">
             <rect x="4" y="8" width="16" height="12" rx="2" />
@@ -45,20 +60,12 @@ const NavBar: React.FC<NavBarProps> = memo(({ activeL1, setActiveL1, systemStatu
         </div>
       </div>
       <div className="flex items-center gap-[1px] flex-1">
-        {[
-          { id: 'overview', label: 'Dashboard' },
-          { id: 'messages', label: 'Messages' },
-          { id: 'memory', label: 'Memory' },
-          { id: 'analytics-main', label: 'Analytics' },
-          { id: 'costs', label: 'Costs' },
-          { id: 'workflows', label: 'Workflows' },
-          { id: 'plugins', label: 'Plugins' },
-        ].map((tab) => (
+        {NAV_TABS.map((tab) => (
           <div
             key={tab.id}
-            onClick={() => setActiveL1(tab.id)}
+            onClick={() => router.push(tab.path)}
             className={`px-[13px] py-[5px] rounded-[5px] text-[11px] font-medium cursor-pointer transition-all duration-150 tracking-[0.06em] uppercase ${
-              activeL1 === tab.id ? 'text-cyan-custom bg-[rgba(0,212,170,0.1)] border border-[rgba(0,212,170,0.2)]' : 'text-txt3 hover:text-txt2 hover:bg-[rgba(255,255,255,0.03)]'
+              activeTab === tab.id ? 'text-cyan-custom bg-[rgba(0,212,170,0.1)] border border-[rgba(0,212,170,0.2)]' : 'text-txt3 hover:text-txt2 hover:bg-[rgba(255,255,255,0.03)]'
             }`}
           >
             {tab.label}

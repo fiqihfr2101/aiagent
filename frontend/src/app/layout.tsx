@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "H.E.R.M.E.S. — AI Agent Orchestrator",
+  title: "AFILABS — AI Agent Orchestrator",
   description: "Mission Control for your AI agent fleet. Live telemetry, organizational graph, and second-brain memory — one console.",
   icons: { icon: "/favicon.ico" },
 };

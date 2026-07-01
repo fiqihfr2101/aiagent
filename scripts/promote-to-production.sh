@@ -42,11 +42,14 @@ echo ""
 echo "[2/5] Backing up production data..."
 mkdir -p "$BACKUP_DIR"
 
-# Dump production postgres
-echo "  Dumping production database..."
-docker compose -f "$PROD_COMPOSE" exec -T temporal-db \
-    pg_dump -U temporal -d hermes > "$BACKUP_DIR/hermes_production.sql" 2>/dev/null || \
-    echo "  ⚠ Could not dump production DB (may not exist yet)" >&2
+# Dump production databases (hermes + temporal)
+echo "  Dumping production databases..."
+for db_name in hermes temporal; do
+    docker compose -f "$PROD_COMPOSE" exec -T temporal-db \
+        pg_dump -U temporal -d "$db_name" > "$BACKUP_DIR/${db_name}_production.sql" 2>/dev/null && \
+        echo "  ✓ Backed up ${db_name}" || \
+        echo "  ⚠ Could not dump ${db_name} (may not exist yet)" >&2
+done
 
 # Backup production redis
 echo "  Saving production Redis snapshot..."

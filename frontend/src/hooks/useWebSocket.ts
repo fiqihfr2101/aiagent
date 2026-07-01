@@ -1,4 +1,4 @@
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useDebouncedCallback } from './useDebounce';
@@ -19,6 +19,8 @@ interface UseWebSocketOptions {
   reconnectBaseMs?: number;
   reconnectMaxMs?: number;
   messageBufferMax?: number;
+  /** When false, the hook skips connecting and fetching until it becomes true. */
+  enabled?: boolean;
 }
 
 export const useWebSocket = (
@@ -30,6 +32,7 @@ export const useWebSocket = (
     reconnectBaseMs = 1000,
     reconnectMaxMs = 30000,
     messageBufferMax = 200,
+    enabled = true,
   } = options;
 
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -122,6 +125,13 @@ export const useWebSocket = (
   useEffect(() => {
     let unmounted = false;
 
+    // Don't connect if not enabled (e.g. user not authenticated)
+    if (!enabled) {
+      setSystemOnline(false);
+      setConnectionStatus('disconnected');
+      return;
+    }
+
     const connect = () => {
       if (unmounted) return;
       setConnectionStatus('connecting');
@@ -178,16 +188,20 @@ export const useWebSocket = (
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       socketRef.current?.close();
     };
-  }, [url, reconnectBaseMs, reconnectMaxMs, handleMessage, flushBuffer]);
+  }, [url, enabled, reconnectBaseMs, reconnectMaxMs, handleMessage, flushBuffer]);
 
   const fetchTaskCounts = useDebouncedCallback(async () => {
     try {
+      // Don't fetch if not enabled (user not authenticated)
+      if (typeof window !== 'undefined' && !localStorage.getItem('access_token')) {
+        return;
+      }
       const cached = apiCache.get<TaskCounts>('GET:' + API_BASE + '/tasks/counts');
       if (cached) {
         setTaskCounts(cached);
         return;
       }
-      const res = await fetch(API_BASE + '/tasks/counts');
+      const res = await fetch(API_BASE + '/tasks/counts', { headers: getAuthHeaders('') });
       if (res.ok) {
         const counts = await res.json();
         setTaskCounts(counts);
@@ -198,10 +212,12 @@ export const useWebSocket = (
     }
   }, 300);
 
-  // Fetch task counts on mount
+  // Fetch task counts on mount (only when enabled)
   useEffect(() => {
-    fetchTaskCounts();
-  }, []);
+    if (enabled) {
+      fetchTaskCounts();
+    }
+  }, [enabled]);
 
   const markAgentStopping = (agentId: string) => {
     setStoppingAgentIds(prev => new Set(prev).add(agentId));

@@ -1,5 +1,5 @@
 'use client';
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 import React, { useState, useCallback } from 'react';
 import { MemorySearchResult } from '../types';
 
@@ -33,7 +33,7 @@ const MemorySearch: React.FC<MemorySearchProps> = ({ agents, onSelectMemory }) =
     try {
       const resp = await fetch(API_BASE + '/memories/search', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           query: query.trim(),
           agent_id: agentFilter || undefined,

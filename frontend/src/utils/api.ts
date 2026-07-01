@@ -70,3 +70,18 @@ export function getWsBaseUrl(): string {
 // Export the base URLs
 export const API_BASE = getApiBaseUrl();
 export const WS_BASE = getWsBaseUrl();
+
+// Helper to build headers with auth token for API calls
+export function getAuthHeaders(contentType: string = 'application/json'): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (contentType) {
+    headers['Content-Type'] = contentType;
+  }
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      headers['Authorization'] = 'Bearer ' + token;
+    }
+  }
+  return headers;
+}

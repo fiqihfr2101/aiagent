@@ -159,6 +159,24 @@ export interface MemoryStats {
 }
 
 // ─── Role Types ─────────────────────────────────────────────────
+// ─── Chat / Orchestrator Types ───────────────────────────────────
+
+export interface ChatAgent {
+  id: string;
+  name: string;
+  role: string;
+  color: string;
+}
+
+export interface ChatResponse {
+  agent: string;
+  agent_name: string;
+  agent_role: string;
+  agent_color: string;
+  response: string;
+  files_processed: string[];
+  conversation_id: string;
+}
 
 export interface Role {
   id: string;

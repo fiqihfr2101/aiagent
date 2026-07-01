@@ -1,5 +1,5 @@
 'use client';
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 
 import React, { useState, useEffect, useCallback } from 'react';
 
@@ -54,7 +54,7 @@ export default function Marketplace({ onInstall }: MarketplaceProps) {
       const params = new URLSearchParams();
       if (search) params.set('search', search);
       if (categoryFilter) params.set('category', categoryFilter);
-      const res = await fetch(`${API_URL}/marketplace?${params}`);
+      const res = await fetch(`${API_URL}/marketplace?${params}`, { headers: getAuthHeaders('') });
       if (res.ok) {
         const data = await res.json();
         setPlugins(data);
@@ -68,7 +68,7 @@ export default function Marketplace({ onInstall }: MarketplaceProps) {
 
   const fetchInstalled = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/plugins`);
+      const res = await fetch(`${API_URL}/plugins`, { headers: getAuthHeaders('') });
       if (res.ok) {
         const data = await res.json();
         setInstalled(new Set(data.map((p: Plugin) => p.id)));
@@ -88,7 +88,7 @@ export default function Marketplace({ onInstall }: MarketplaceProps) {
     try {
       const res = await fetch(`${API_URL}/plugins`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ plugin_id: pluginId }),
       });
       if (res.ok) {
@@ -104,7 +104,7 @@ export default function Marketplace({ onInstall }: MarketplaceProps) {
 
   const handleUninstall = async (pluginId: string) => {
     try {
-      const res = await fetch(`${API_URL}/plugins/${pluginId}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/plugins/${pluginId}`, { method: 'DELETE', headers: getAuthHeaders('') });
       if (res.ok) {
         setInstalled(prev => {
           const next = new Set(prev);

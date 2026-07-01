@@ -216,6 +216,7 @@ body::after {
   gap: 1px;
   padding: 0 16px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .drtab {
   padding: 9px 11px;
@@ -301,6 +302,9 @@ body::after {
   
   /* Sidebar horizontal scroll on mobile */
   .flex-shrink-0.h-\[34px\] { overflow-x: auto; }
+
+  /* Drawer takes full width on small screens */
+  .fixed.top-0.right-0.h-full { width: 100vw !important; max-width: 100vw !important; }
 }
 
 @media (max-width: 480px) {

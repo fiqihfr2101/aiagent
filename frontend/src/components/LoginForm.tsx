@@ -75,10 +75,10 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
         {/* Logo / Title */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl border border-cyan-500/20 bg-cyan-500/5 mb-4">
-            <span className="text-2xl font-bold font-mono text-cyan-400">H</span>
+            <span className="text-2xl font-bold font-mono text-cyan-400">A</span>
           </div>
           <h1 className="text-3xl font-bold tracking-[0.08em] text-white mb-2">
-            H.E.R.M.E.S.
+            AFILABS
           </h1>
           <p className="text-sm text-gray-300 font-mono tracking-wider">
             AI Agent Orchestrator — Mission Control
@@ -249,7 +249,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
 
         {/* Footer */}
         <p className="text-center text-[10px] text-gray-300 font-mono mt-6 tracking-wider">
-          H.E.R.M.E.S. v1.0 — Secure Access
+          AFILABS v1.0 — Secure Access
         </p>
       </div>
     </div>

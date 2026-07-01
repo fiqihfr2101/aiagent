@@ -111,12 +111,22 @@ services:
   temporal-db:
     container_name: prod-db
     image: postgres:13
+    command: >
+      postgres
+      -c wal_level=replica
+      -c max_wal_senders=3
+      -c max_replication_slots=3
+      -c hot_standby=on
     environment:
       - POSTGRES_USER=temporal
       - POSTGRES_PASSWORD=temporal
       - POSTGRES_DB=temporal
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-production-db.sql:/docker-entrypoint-initdb.d/01-init-hermes.sql:ro
+      - ./scripts/create-replication-user.sql:/docker-entrypoint-initdb.d/02-replication-user.sql:ro
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
@@ -125,5 +135,31 @@ services:
       retries: 5
       start_period: 30s
 
+  # PostgreSQL Read-Only Replica (streaming replication from prod-db)
+  replica-db:
+    container_name: replica-db
+    image: postgres:13
+    environment:
+      - PGUSER=replicator
+      - PGPASSWORD=replicator_password
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./scripts/start-replica.sh:/start-replica.sh:ro
+    restart: always
+    depends_on:
+      temporal-db:
+        condition: service_healthy
+    command: ["bash", "/start-replica.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U replicator -d hermes"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
 volumes:
   redis_data:
+  postgres_data:
+  postgres_replica_data:

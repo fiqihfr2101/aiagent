@@ -2,7 +2,7 @@
 
 import React, { memo, useState, useEffect } from 'react';
 import { Role } from '../types';
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 
 interface AddAgentModalProps {
   isOpen: boolean;
@@ -90,7 +90,7 @@ const AddAgentModal: React.FC<AddAgentModalProps> = memo(({ isOpen, onClose, onA
 
       const res = await fetch(`${API_BASE}/agents`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify(body),
       });
 

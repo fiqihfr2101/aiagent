@@ -103,32 +103,35 @@ backup_postgres() {
     local pg_password="${POSTGRES_PASSWORD:-***}"
     local pg_db="${POSTGRES_DB:-temporal}"
     
-    # Create database dump
-    log_info "Dumping PostgreSQL database: ${pg_db}..."
-    
-    docker exec temporal-db pg_dump \
-        -U "$pg_user" \
-        -d "$pg_db" \
-        --format=custom \
-        --verbose \
-        > "${postgres_backup_dir}/${pg_db}.dump" 2> "${postgres_backup_dir}/dump.log"
-    
-    # Also create SQL dump for easy inspection
-    docker exec temporal-db pg_dump \
-        -U "$pg_user" \
-        -d "$pg_db" \
-        --format=plain \
-        > "${postgres_backup_dir}/${pg_db}.sql" 2>> "${postgres_backup_dir}/dump.log"
-    
-    # Copy pg_hba.conf and postgresql.conf
-    docker cp temporal-db:/var/lib/postgresql/data/pg_hba.conf "${postgres_backup_dir}/" 2>/dev/null || true
-    docker cp temporal-db:/var/lib/postgresql/data/postgresql.conf "${postgres_backup_dir}/" 2>/dev/null || true
-    
-    # Get database size
-    local db_size=$(docker exec temporal-db psql -U "$pg_user" -d "$pg_db" -t -c "SELECT pg_size_pretty(pg_database_size('$pg_db'));" | tr -d '[:space:]')
-    
-    log_info "PostgreSQL backup completed: ${postgres_backup_dir}"
-    log_info "Database size: ${db_size}"
+    # Dump all application databases
+    for db_name in hermes temporal temporal_visibility; do
+        local db_exists
+        db_exists=$(docker exec temporal-db psql -U "$pg_user" -tc \
+            "SELECT 1 FROM pg_database WHERE datname = '${db_name}'" 2>/dev/null | tr -d '[:space:]')
+
+        if [ "$db_exists" = "1" ]; then
+            log_info "Dumping database: ${db_name}..."
+            docker exec temporal-db pg_dump \
+                -U "$pg_user" \
+                -d "$db_name" \
+                --format=custom \
+                --verbose \
+                > "${postgres_backup_dir}/${db_name}.dump" 2> "${postgres_backup_dir}/${db_name}_dump.log"
+
+            docker exec temporal-db pg_dump \
+                -U "$pg_user" \
+                -d "$db_name" \
+                --format=plain \
+                > "${postgres_backup_dir}/${db_name}.sql" 2>> "${postgres_backup_dir}/${db_name}_dump.log"
+
+            local db_size
+            db_size=$(docker exec temporal-db psql -U "$pg_user" -d "$db_name" -t -c \
+                "SELECT pg_size_pretty(pg_database_size('${db_name}'));" | tr -d '[:space:]')
+            log_info "  ${db_name}: ${db_size}"
+        else
+            log_warn "Database '${db_name}' does not exist — skipping"
+        fi
+    done
     
     return 0
 }

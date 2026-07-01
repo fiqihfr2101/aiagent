@@ -1,0 +1,112 @@
+*** Begin Patch
+*** Update File: C:\Users\qoinj\Documents\Fiqih\AIAgent\backend\main.py
+@@ # --- Chat / Orchestrator Endpoints --- @@
+ 
+-
+-# ─── Chat / Orchestrator Endpoints ────────────────────────────────
+-
+-# PostgreSQL-backed conversation store (replaces in-memory dict)
++
++# ─── Code Execution Endpoints ─────────────────────────────────────
++
++
++@app.post("/code/execute")
++async def code_execute_endpoint(request: Request):
++    """
++    Execute code in a sandboxed environment.
++
++    Request body:
++    {
++        "language": "python" | "shell" | "api",
++        "code": "print('hello')",
++        "timeout": 30
++    }
++    """
++    body = await request.json()
++    language = body.get("language", "").strip()
++    code = body.get("code", "").strip()
++    timeout = min(body.get("timeout", 30), 60)
++
++    if not code:
++        raise HTTPException(status_code=400, detail="Code cannot be empty")
++    if not language:
++        raise HTTPException(status_code=400, detail="Language is required")
++
++    result = await code_executor.execute_code_async(language, code, timeout)
++    return result
++
++
++@app.post("/code/parse")
++async def code_parse_endpoint(request: Request):
++    """
++    Parse code blocks from text.
++
++    Request body:
++    {
++        "text": "Here's the code:\n```python\nprint('hello')\n```"
++    }
++    """
++    body = await request.json()
++    text = body.get("text", "")
++
++    if not text:
++        return {"blocks": [], "count": 0}
++
++    blocks = parse_code_blocks(text)
++    # Add auto-execute flag
++    for block in blocks:
++        block["auto_execute"] = should_auto_execute(block["code"], block["language"])
++
++    return {"blocks": blocks, "count": len(blocks)}
++
++
++async def _process_code_blocks(response_text: str) -> list:
++    """Parse LLM response for code blocks and auto-execute safe ones.
++
++    Returns list of execution results.
++    """
++    executions = []
++    blocks = parse_code_blocks(response_text)
++
++    for block in blocks:
++        language = block["language"]
++        code = block["code"]
++
++        # Only auto-execute if the code looks safe
++        if not should_auto_execute(code, language):
++            # Still include the block info, just don't execute
++            executions.append({
++                "language": language,
++                "code": code,
++                "auto_executed": False,
++                "result": None,
++            })
++            continue
++
++        # Execute the code
++        try:
++            result = await code_executor.execute_code_async(language, code, timeout=30)
++            executions.append({
++                "language": language,
++                "code": code,
++                "auto_executed": True,
++                "result": result,
++            })
++            logger.info(
++                "Auto-executed %s code: success=%s, duration=%dms",
++                language, result.get("success"), result.get("duration_ms", 0)
++            )
++        except Exception as e:
++            logger.error("Code execution error: %s", e)
++            executions.append({
++                "language": language,
++                "code": code,
++                "auto_executed": True,
++                "result": {
++                    "success": False,
++                    "language": language,
++                    "code": code,
++                    "stdout": "",
++                    "stderr": f"Execution error: {str(e)}",
+❮SKIP EDIT❯
+*** End Patch

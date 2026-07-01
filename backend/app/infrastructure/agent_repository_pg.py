@@ -46,6 +46,29 @@ class AgentRepository:
     
     def __init__(self, dsn: Optional[str] = None):
         self._pool = get_pool(dsn)
+        self._init_db()
+    
+    def _init_db(self):
+        """Create the agents table if it doesn't exist (idempotent)."""
+        query = """
+            CREATE TABLE IF NOT EXISTS agents (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                role TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT 'claude-sonnet-4',
+                status TEXT NOT NULL DEFAULT 'active',
+                task TEXT DEFAULT 'Idle',
+                color TEXT DEFAULT '#00D4AA',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """
+        try:
+            with self._pool.cursor() as cursor:
+                cursor.execute(query)
+            logger.info("Agents table ensured in PostgreSQL")
+        except Exception as e:
+            logger.warning("Could not create agents table (may already exist): %s", e)
     
     def _row_to_dict(self, row) -> Dict[str, Any]:
         """Convert a PostgreSQL row to a dictionary."""

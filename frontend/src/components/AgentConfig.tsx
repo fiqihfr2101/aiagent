@@ -1,7 +1,7 @@
 'use client';
 
 import React, { memo, useState, useEffect, useCallback } from 'react';
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 
 interface AgentConfigData {
   id?: string;
@@ -60,7 +60,7 @@ const AgentConfig: React.FC<AgentConfigProps> = memo(({ agentId, agentName, onCo
   const fetchConfig = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/agents/${agentId}/config`);
+      const res = await fetch(`${API_BASE}/agents/${agentId}/config`, { headers: getAuthHeaders('') });
       if (res.ok) {
         const data = await res.json();
         setConfig(data);
@@ -82,7 +82,7 @@ const AgentConfig: React.FC<AgentConfigProps> = memo(({ agentId, agentName, onCo
   // Fetch templates
   const fetchTemplates = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/templates`);
+      const res = await fetch(`${API_BASE}/templates`, { headers: getAuthHeaders('') });
       if (res.ok) {
         const data = await res.json();
         setTemplates(data.templates || []);
@@ -106,7 +106,7 @@ const AgentConfig: React.FC<AgentConfigProps> = memo(({ agentId, agentName, onCo
     try {
       const res = await fetch(`${API_BASE}/agents/${agentId}/config`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           model,
           system_prompt: systemPrompt,
@@ -137,7 +137,7 @@ const AgentConfig: React.FC<AgentConfigProps> = memo(({ agentId, agentName, onCo
     try {
       const res = await fetch(`${API_BASE}/agents/${agentId}/config/apply-template`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ template_id: templateId }),
       });
 

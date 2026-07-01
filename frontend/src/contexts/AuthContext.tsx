@@ -50,6 +50,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('refresh_token');
   }, []);
 
+  const isTokenExpired = useCallback((token: string): boolean => {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      // Consider expired if exp is in the past (with 30s buffer)
+      return payload.exp * 1000 < Date.now() - 30000;
+    } catch {
+      return true; // If we can't decode, treat as expired
+    }
+  }, []);
+
+  const tryRefreshToken = useCallback(async (): Promise<boolean> => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) return false;
+
+    try {
+      const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+
+      if (refreshRes.ok) {
+        const refreshData = await refreshRes.json();
+        storeTokens(refreshData.access_token, refreshData.refresh_token);
+
+        // Fetch user with new token
+        const retryRes = await fetch(`${API_BASE}/auth/me`, {
+          headers: { 'Authorization': 'Bearer ' + refreshData.access_token },
+        });
+        if (retryRes.ok) {
+          const retryData = await retryRes.json();
+          setUser(retryData);
+          return true;
+        }
+      }
+    } catch {
+      // Refresh failed
+    }
+    return false;
+  }, [getRefreshToken, storeTokens]);
+
   const refreshUser = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
@@ -59,38 +100,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/auth/me`, {
-        headers: { 'Authorization': 'Bearer ' + token },
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data);
+      // If token is already expired, skip /auth/me and go straight to refresh
+      if (isTokenExpired(token)) {
+        const refreshed = await tryRefreshToken();
+        if (!refreshed) {
+          clearTokens();
+          setUser(null);
+        }
       } else {
-        // Token expired, try to refresh
-        const refreshToken = getRefreshToken();
-        if (refreshToken) {
-          const refreshRes = await fetch(`${API_BASE}/auth/refresh`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: refreshToken }),
-          });
+        const res = await fetch(`${API_BASE}/auth/me`, {
+          headers: { 'Authorization': 'Bearer ' + token },
+        });
 
-          if (refreshRes.ok) {
-            const refreshData = await refreshRes.json();
-            storeTokens(refreshData.access_token, refreshData.refresh_token);
-            // Retry with new token
-            const retryRes = await fetch(`${API_BASE}/auth/me`, {
-              headers: { 'Authorization': 'Bearer ' + refreshData.access_token },
-            });
-            if (retryRes.ok) {
-              const retryData = await retryRes.json();
-              setUser(retryData);
-            } else {
-              clearTokens();
-              setUser(null);
-            }
-          } else {
+        if (res.ok) {
+          const data = await res.json();
+          setUser(data);
+        } else if (res.status === 401) {
+          // Token rejected, try to refresh
+          const refreshed = await tryRefreshToken();
+          if (!refreshed) {
             clearTokens();
             setUser(null);
           }
@@ -101,11 +129,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (err) {
       console.error('Failed to refresh user:', err);
-      setUser(null);
+      // On network/CORS error, try refresh token flow
+      try {
+        const refreshed = await tryRefreshToken();
+        if (!refreshed) {
+          setUser(null);
+        }
+      } catch {
+        setUser(null);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [getAccessToken, getRefreshToken, storeTokens, clearTokens]);
+  }, [getAccessToken, isTokenExpired, tryRefreshToken, clearTokens]);
 
   const login = useCallback(async (username: string, password: string, totpCode?: string) => {
     setError(null);
@@ -246,7 +282,7 @@ function LoginForm() {
     <div className="flex items-center justify-center h-screen bg-[#0B0F1A]">
       <div className="w-full max-w-md p-8">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">H.E.R.M.E.S.</h1>
+          <h1 className="text-3xl font-bold text-white mb-2">AFILABS</h1>
           <p className="text-gray-300 text-sm">AI Agent Orchestrator</p>
         </div>
 

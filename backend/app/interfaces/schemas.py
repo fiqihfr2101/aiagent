@@ -127,7 +127,14 @@ class AgentCreate(BaseModel):
         if v is None:
             return v
         v = sanitize_plain(v)
-        return v if v else None
+        if not v:
+            return None
+        # Validate against predefined roles from roles.py
+        from app.interfaces.roles import get_role_by_id, ROLES
+        if not get_role_by_id(v):
+            valid_ids = [r["id"] for r in ROLES]
+            raise ValueError(f"Invalid role_id: '{v}'. Valid role IDs: {', '.join(valid_ids)}")
+        return v
 
     @field_validator("model")
     @classmethod

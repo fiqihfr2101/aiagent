@@ -1,5 +1,5 @@
 'use client';
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 
 import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
 import NotificationItemComponent, { NotificationItem } from './NotificationItem';
@@ -19,7 +19,7 @@ const NotificationBell: React.FC<NotificationBellProps> = memo(({ newNotificatio
   const fetchNotifications = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(API_BASE + '/notifications?page_size=20');
+      const res = await fetch(API_BASE + '/notifications?page_size=20', { headers: getAuthHeaders('') });
       if (res.ok) {
         const data = await res.json();
         setNotifications(data.notifications || []);
@@ -60,7 +60,7 @@ const NotificationBell: React.FC<NotificationBellProps> = memo(({ newNotificatio
     try {
       await fetch(API_BASE + '/notifications/read', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ id }),
       });
       setNotifications(prev =>
@@ -74,7 +74,7 @@ const NotificationBell: React.FC<NotificationBellProps> = memo(({ newNotificatio
 
   const handleMarkAllRead = useCallback(async () => {
     try {
-      await fetch(API_BASE + '/notifications/read-all', { method: 'POST' });
+      await fetch(API_BASE + '/notifications/read-all', { method: 'POST', headers: getAuthHeaders('') });
       setNotifications(prev => prev.map(n => ({ ...n, read: true })));
       setUnreadCount(0);
     } catch (err) {
@@ -86,7 +86,7 @@ const NotificationBell: React.FC<NotificationBellProps> = memo(({ newNotificatio
     try {
       await Promise.all(
         notifications.map(n =>
-          fetch(`${API_BASE}/notifications/${n.id}`, { method: 'DELETE' })
+          fetch(`${API_BASE}/notifications/${n.id}`, { method: 'DELETE', headers: getAuthHeaders('') })
         )
       );
       setNotifications([]);

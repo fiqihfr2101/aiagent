@@ -1,5 +1,5 @@
 'use client';
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 
 import React, { useState, useEffect, useCallback } from 'react';
 
@@ -31,7 +31,7 @@ export default function PluginManager() {
 
   const fetchPlugins = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/plugins`);
+      const res = await fetch(`${API_URL}/plugins`, { headers: getAuthHeaders('') });
       if (res.ok) {
         const data = await res.json();
         setPlugins(data);
@@ -50,7 +50,7 @@ export default function PluginManager() {
   const handleToggle = async (pluginId: string, currentlyEnabled: boolean) => {
     const endpoint = currentlyEnabled ? 'disable' : 'enable';
     try {
-      const res = await fetch(`${API_URL}/plugins/${pluginId}/${endpoint}`, { method: 'POST' });
+      const res = await fetch(`${API_URL}/plugins/${pluginId}/${endpoint}`, { method: 'POST', headers: getAuthHeaders('') });
       if (res.ok) {
         setPlugins(prev => prev.map(p => p.id === pluginId ? { ...p, enabled: !currentlyEnabled } : p));
       }
@@ -61,7 +61,7 @@ export default function PluginManager() {
 
   const handleUninstall = async (pluginId: string) => {
     try {
-      const res = await fetch(`${API_URL}/plugins/${pluginId}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/plugins/${pluginId}`, { method: 'DELETE', headers: getAuthHeaders('') });
       if (res.ok) {
         setPlugins(prev => prev.filter(p => p.id !== pluginId));
         if (configuringPlugin?.id === pluginId) setConfiguringPlugin(null);
@@ -82,7 +82,7 @@ export default function PluginManager() {
     try {
       const res = await fetch(`${API_URL}/plugins/${configuringPlugin.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ config: configDraft }),
       });
       if (res.ok) {

@@ -1,5 +1,5 @@
 'use client';
-import { API_BASE } from '../utils/api';
+import { API_BASE, getAuthHeaders } from '../utils/api';
 
 import React, { memo, useState, useEffect } from 'react';
 import { Agent } from '../types';
@@ -106,7 +106,7 @@ const EditAgentModal: React.FC<EditAgentModalProps> = memo(({ isOpen, agent, age
     try {
       const res = await fetch(`${API_BASE}/agents/${agent.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ name: name.trim(), role: role.trim(), model }),
       });
 
