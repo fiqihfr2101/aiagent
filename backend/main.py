@@ -855,6 +855,58 @@ async def list_agents():
     await cache.set("agents:list", result, ttl=30)
     return result
 
+
+@app.get("/agents/workdir")
+async def get_agent_workdir():
+    """Get the current agent working directory."""
+    from app.infrastructure.code_executor import code_executor
+    return {
+        "workdir": code_executor.agent_work_dir,
+        "exists": os.path.exists(code_executor.agent_work_dir),
+    }
+
+
+class WorkdirUpdate(BaseModel):
+    path: str
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    template: str = "default"
+
+
+@app.post("/agents/workdir")
+async def set_agent_workdir(data: WorkdirUpdate):
+    """Update the agent working directory."""
+    from app.infrastructure.code_executor import code_executor
+    try:
+        code_executor.agent_work_dir = data.path
+        return {
+            "success": True,
+            "workdir": code_executor.agent_work_dir,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/agents/create-project")
+async def create_agent_project(data: ProjectCreate):
+    """Create a new project in the agent working directory."""
+    from app.infrastructure.code_executor import code_executor
+    result = code_executor.create_project(data.name, data.template)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to create project"))
+    return result
+
+
+@app.get("/agents/projects")
+async def list_agent_projects():
+    """List all projects in the agent working directory."""
+    from app.infrastructure.code_executor import code_executor
+    return code_executor.list_projects()
+
+
+
 @app.get("/agents/{agent_id}")
 async def get_agent(agent_id: str):
     """Get agent detail by ID."""
@@ -1032,6 +1084,45 @@ async def dispatch_task(task_data: TaskCreate):
     return task
 
 
+
+
+def _extract_and_save_code_files(content: str, task_id: str, agent_id: str) -> list:
+    """Extract code blocks from LLM response and save them to files.
+    
+    Looks for patterns like:
+    - ```python filename.py ... ```
+    - ```javascript filename.js ... ```
+    - File: filename.py followed by code
+    
+    Returns list of saved file paths.
+    """
+    from app.infrastructure.code_executor import code_executor
+    
+    saved_files = []
+    
+    # Pattern 1: ```language filename.ext ... ```
+    code_block_pattern = r'```(?:(\w+)\s+)?([^\n]+\.\w+)\n(.*?)```'
+    matches = re.findall(code_block_pattern, content, re.DOTALL)
+    
+    for lang, filename, code in matches:
+        filename = filename.strip()
+        if not os.path.isabs(filename):
+            # Create a project folder for this task
+            project_name = f"task_{task_id[:8]}"
+            project_path = os.path.join(code_executor.agent_work_dir, project_name)
+            os.makedirs(project_path, exist_ok=True)
+            filepath = os.path.join(project_path, filename)
+        else:
+            filepath = filename
+        
+        # Write the file
+        result = code_executor.write_file(filepath, code.strip(), overwrite=True)
+        if result["success"]:
+            saved_files.append(filepath)
+            log_repo.create(f"Saved file: {filepath}", level="INFO", task_id=task_id, agent_id=agent_id)
+    
+    return saved_files
+
 async def _execute_task_with_opencode(task_id: str, agent_id: str, title: str, model: str = "minimax-m3"):
     """Execute task via OpenCode API."""
     from app.infrastructure.opencode_adapter import opencode_adapter
@@ -1061,6 +1152,13 @@ async def _execute_task_with_opencode(task_id: str, agent_id: str, title: str, m
         if result["success"]:
             # Task completed successfully
             content = result["content"]
+            
+            # Extract and save any code files from the response
+            saved_files = _extract_and_save_code_files(content, task_id, agent_id)
+            if saved_files:
+                log_repo.create(f"Saved {len(saved_files)} file(s) to working directory", 
+                              level="INFO", task_id=task_id, agent_id=agent_id)
+            
             input_tokens = result["input_tokens"]
             output_tokens = result["output_tokens"]
             cost = result["cost"]

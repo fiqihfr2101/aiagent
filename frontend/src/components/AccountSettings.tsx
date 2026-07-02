@@ -39,11 +39,39 @@ export default function AccountSettings() {
   const [showDisable2Fa, setShowDisable2Fa] = useState(false);
   const [disablePassword, setDisablePassword] = useState('');
 
+  // Working directory state
+  const [workdir, setWorkdir] = useState('');
+  const [workdirExists, setWorkdirExists] = useState(true);
+  const [newWorkdir, setNewWorkdir] = useState('');
+  const [workdirError, setWorkdirError] = useState<string | null>(null);
+  const [workdirSuccess, setWorkdirSuccess] = useState<string | null>(null);
+  const [isUpdatingWorkdir, setIsUpdatingWorkdir] = useState(false);
+
   useEffect(() => {
     if (user?.two_fa_enabled) {
       setTwoFaEnabled(true);
     }
   }, [user]);
+
+  // Fetch current working directory
+  useEffect(() => {
+    const fetchWorkdir = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/agents/workdir`, {
+          headers: buildAuthHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setWorkdir(data.workdir);
+          setWorkdirExists(data.exists);
+          setNewWorkdir(data.workdir);
+        }
+      } catch (err) {
+        console.error('Failed to fetch working directory:', err);
+      }
+    };
+    fetchWorkdir();
+  }, []);
 
   // ─── Password Change ─────────────────────────────────────────
   const handlePasswordChange = useCallback(async (e: React.FormEvent) => {
@@ -99,6 +127,7 @@ export default function AccountSettings() {
       const res = await fetch(`${API_BASE}/auth/2fa/setup`, {
         method: 'POST',
         headers: buildAuthHeaders(),
+        body: JSON.stringify({}),
       });
 
       if (!res.ok) {
@@ -115,17 +144,12 @@ export default function AccountSettings() {
     }
   }, []);
 
-  // ─── 2FA Verify & Enable ───────────────────────────────────
   const handle2faVerify = useCallback(async () => {
-    if (twoFaCode.length !== 6) {
-      setTwoFaError('Code must be 6 digits');
-      return;
-    }
-
     setTwoFaError(null);
+    setTwoFaSuccess(null);
     setIsVerifying2Fa(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/2fa/enable`, {
+      const res = await fetch(`${API_BASE}/auth/2fa/verify`, {
         method: 'POST',
         headers: buildAuthHeaders(),
         body: JSON.stringify({ code: twoFaCode }),
@@ -140,7 +164,7 @@ export default function AccountSettings() {
       setTwoFaSetupData(null);
       setTwoFaCode('');
       setTwoFaSuccess('2FA enabled successfully');
-      refreshUser();
+      await refreshUser();
     } catch (err) {
       setTwoFaError(err instanceof Error ? err.message : 'Failed to verify code');
     } finally {
@@ -148,14 +172,9 @@ export default function AccountSettings() {
     }
   }, [twoFaCode, refreshUser]);
 
-  // ─── 2FA Disable ───────────────────────────────────────────
   const handle2faDisable = useCallback(async () => {
-    if (!disablePassword.trim()) {
-      setTwoFaError('Password is required to disable 2FA');
-      return;
-    }
-
     setTwoFaError(null);
+    setTwoFaSuccess(null);
     setIsDisabling2Fa(true);
     try {
       const res = await fetch(`${API_BASE}/auth/2fa/disable`, {
@@ -170,12 +189,10 @@ export default function AccountSettings() {
       }
 
       setTwoFaEnabled(false);
-      setTwoFaSetupData(null);
-      setTwoFaCode('');
-      setDisablePassword('');
       setShowDisable2Fa(false);
+      setDisablePassword('');
       setTwoFaSuccess('2FA disabled successfully');
-      refreshUser();
+      await refreshUser();
     } catch (err) {
       setTwoFaError(err instanceof Error ? err.message : 'Failed to disable 2FA');
     } finally {
@@ -183,14 +200,93 @@ export default function AccountSettings() {
     }
   }, [disablePassword, refreshUser]);
 
+  // ─── Working Directory Update ───────────────────────────────────
+  const handleWorkdirUpdate = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWorkdirError(null);
+    setWorkdirSuccess(null);
+    setIsUpdatingWorkdir(true);
+
+    try {
+      const res = await fetch(`${API_BASE}/agents/workdir`, {
+        method: 'POST',
+        headers: buildAuthHeaders(),
+        body: JSON.stringify({ path: newWorkdir }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to update working directory');
+      }
+
+      const data = await res.json();
+      setWorkdir(data.workdir);
+      setWorkdirSuccess('Working directory updated successfully');
+    } catch (err) {
+      setWorkdirError(err instanceof Error ? err.message : 'Failed to update working directory');
+    } finally {
+      setIsUpdatingWorkdir(false);
+    }
+  }, [newWorkdir]);
+
   return (
-    <div className="max-w-2xl mx-auto p-6 space-y-8">
+    <div className="space-y-8 max-w-2xl mx-auto p-6">
       <h1 className="text-2xl font-bold text-white">Account Settings</h1>
 
-      {/* Password Change Section */}
+      {/* Working Directory Section */}
+      <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+        <h2 className="text-lg font-semibold text-white mb-4">Agent Working Directory</h2>
+        <p className="text-gray-400 text-sm mb-4">
+          This is where agents will create and save projects and files.
+        </p>
+
+        <div className="mb-4">
+          <label className="block text-sm text-gray-300 mb-1">Current Directory</label>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 bg-gray-900 px-4 py-2 rounded-lg text-cyan-400 text-sm break-all">
+              {workdir || 'Loading...'}
+            </code>
+            {!workdirExists && (
+              <span className="text-yellow-500 text-xs">⚠ Directory not found</span>
+            )}
+          </div>
+        </div>
+
+        <form onSubmit={handleWorkdirUpdate} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-300 mb-1">New Directory Path</label>
+            <input
+              type="text"
+              value={newWorkdir}
+              onChange={(e) => setNewWorkdir(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-cyan-500 focus:outline-none"
+              placeholder="C:\Users\username\Documents\Projects"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Use absolute path. Directory will be created if it doesn't exist.
+            </p>
+          </div>
+
+          <button
+            type="submit"
+            disabled={isUpdatingWorkdir || !newWorkdir.trim()}
+            className="bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
+          >
+            {isUpdatingWorkdir ? 'Updating...' : 'Update Directory'}
+          </button>
+        </form>
+
+        {workdirError && (
+          <div className="mt-4 text-red-400 text-sm">{workdirError}</div>
+        )}
+        {workdirSuccess && (
+          <div className="mt-4 text-green-400 text-sm">{workdirSuccess}</div>
+        )}
+      </div>
+
+      {/* Password Section */}
       <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
         <h2 className="text-lg font-semibold text-white mb-4">Change Password</h2>
-        
         <form onSubmit={handlePasswordChange} className="space-y-4">
           <div>
             <label className="block text-sm text-gray-300 mb-1">Current Password</label>
@@ -199,10 +295,8 @@ export default function AccountSettings() {
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
               className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-cyan-500 focus:outline-none"
-              required
             />
           </div>
-          
           <div>
             <label className="block text-sm text-gray-300 mb-1">New Password</label>
             <input
@@ -210,11 +304,8 @@ export default function AccountSettings() {
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-cyan-500 focus:outline-none"
-              required
-              minLength={8}
             />
           </div>
-          
           <div>
             <label className="block text-sm text-gray-300 mb-1">Confirm New Password</label>
             <input
@@ -222,17 +313,8 @@ export default function AccountSettings() {
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-cyan-500 focus:outline-none"
-              required
             />
           </div>
-
-          {passwordError && (
-            <div className="text-red-400 text-sm">{passwordError}</div>
-          )}
-          {passwordSuccess && (
-            <div className="text-green-400 text-sm">{passwordSuccess}</div>
-          )}
-
           <button
             type="submit"
             disabled={isChangingPassword}
@@ -241,6 +323,12 @@ export default function AccountSettings() {
             {isChangingPassword ? 'Changing...' : 'Change Password'}
           </button>
         </form>
+        {passwordError && (
+          <div className="mt-4 text-red-400 text-sm">{passwordError}</div>
+        )}
+        {passwordSuccess && (
+          <div className="mt-4 text-green-400 text-sm">{passwordSuccess}</div>
+        )}
       </div>
 
       {/* 2FA Section */}
@@ -249,13 +337,11 @@ export default function AccountSettings() {
         
         {twoFaEnabled ? (
           <div className="space-y-4">
-            <div className="flex items-center gap-2 text-green-400">
-              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-              </svg>
-              <span>2FA is enabled</span>
+            <div className="flex items-center gap-2">
+              <span className="text-green-400">✓</span>
+              <span className="text-white">2FA is enabled</span>
             </div>
-
+            
             {!showDisable2Fa ? (
               <button
                 onClick={() => setShowDisable2Fa(true)}
@@ -265,20 +351,20 @@ export default function AccountSettings() {
               </button>
             ) : (
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">Enter password to disable 2FA</label>
-                  <input
-                    type="password"
-                    value={disablePassword}
-                    onChange={(e) => setDisablePassword(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-cyan-500 focus:outline-none"
-                    placeholder="Current password"
-                  />
-                </div>
+                <p className="text-gray-300 text-sm">
+                  Enter your password to disable 2FA:
+                </p>
+                <input
+                  type="password"
+                  value={disablePassword}
+                  onChange={(e) => setDisablePassword(e.target.value)}
+                  className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-cyan-500 focus:outline-none"
+                  placeholder="Enter password"
+                />
                 <div className="flex gap-2">
                   <button
                     onClick={handle2faDisable}
-                    disabled={isDisabling2Fa}
+                    disabled={isDisabling2Fa || !disablePassword.trim()}
                     className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg disabled:opacity-50"
                   >
                     {isDisabling2Fa ? 'Disabling...' : 'Confirm Disable'}
@@ -287,7 +373,6 @@ export default function AccountSettings() {
                     onClick={() => {
                       setShowDisable2Fa(false);
                       setDisablePassword('');
-                      setTwoFaError(null);
                     }}
                     className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg"
                   >

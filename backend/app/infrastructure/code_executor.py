@@ -11,10 +11,14 @@ Security measures:
 
 import asyncio
 import logging
+import os
 import platform
 import re
+import shutil
 import subprocess
 import time
+from datetime import datetime
+from pathlib import Path
 from typing import Dict, Optional
 
 import httpx
@@ -51,14 +55,16 @@ PYTHON_DANGEROUS = [
     r'\beval\s*\(',
     r'\bos\.system\s*\(',
     r'\bsubprocess\b',
-    r'\bopen\s*\(.*["\']w',    # file writes
     r'\bshutil\.rmtree\b',
     r'\bshutil\.rm\b',
 ]
 
+# Default working directory for agents
+DEFAULT_AGENT_WORK_DIR = r"C:\Users\qoinj\Documents\Fiqih\Project"
+
 
 class CodeExecutor:
-    """Executes code in sandboxed subprocesses."""
+    """Executes code in sandboxed subprocesses with file operation support."""
 
     def __init__(self):
         self.is_windows = platform.system() == "Windows"
@@ -67,6 +73,23 @@ class CodeExecutor:
         # Shell command
         self.shell_cmd = "bash" if not self.is_windows else "cmd"
         self.shell_flag = "-c" if not self.is_windows else "/c"
+        # Working directory from environment or default
+        self._agent_work_dir = os.getenv("AGENT_WORK_DIR", DEFAULT_AGENT_WORK_DIR)
+        # Ensure working directory exists
+        os.makedirs(self._agent_work_dir, exist_ok=True)
+        logger.info("Agent working directory: %s", self._agent_work_dir)
+
+    @property
+    def agent_work_dir(self) -> str:
+        """Get the current agent working directory."""
+        return self._agent_work_dir
+
+    @agent_work_dir.setter
+    def agent_work_dir(self, path: str):
+        """Set the agent working directory."""
+        os.makedirs(path, exist_ok=True)
+        self._agent_work_dir = path
+        logger.info("Agent working directory changed to: %s", path)
 
     def _is_dangerous_command(self, command: str) -> Optional[str]:
         """Check if a shell command contains dangerous patterns.
@@ -93,6 +116,21 @@ class CodeExecutor:
             truncated = encoded[:MAX_OUTPUT_SIZE].decode("utf-8", errors="ignore")
             return truncated + "\n... [OUTPUT TRUNCATED - exceeded 100KB limit]"
         return data
+
+    def _resolve_path(self, path: str) -> str:
+        """Resolve a path relative to the agent working directory.
+        
+        Args:
+            path: Relative or absolute path
+            
+        Returns:
+            Absolute path resolved from agent work directory
+        """
+        # If path is absolute, return as-is
+        if os.path.isabs(path):
+            return path
+        # Otherwise resolve relative to agent work directory
+        return os.path.join(self._agent_work_dir, path)
 
     def execute_python(self, code: str, timeout: int = 30) -> Dict:
         """Execute Python code in a sandboxed subprocess.
@@ -126,6 +164,7 @@ class CodeExecutor:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                cwd=self._agent_work_dir,
                 # Don't inherit environment for basic isolation
                 # but keep PATH so python is findable
             )
@@ -142,6 +181,7 @@ class CodeExecutor:
                 "stderr": stderr,
                 "exit_code": result.returncode,
                 "duration_ms": duration_ms,
+                "cwd": self._agent_work_dir,
             }
 
         except subprocess.TimeoutExpired:
@@ -154,6 +194,7 @@ class CodeExecutor:
                 "stderr": f"Execution timed out after {timeout} seconds",
                 "exit_code": -1,
                 "duration_ms": duration_ms,
+                "cwd": self._agent_work_dir,
             }
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
@@ -166,6 +207,7 @@ class CodeExecutor:
                 "stderr": f"Execution error: {str(e)}",
                 "exit_code": -1,
                 "duration_ms": duration_ms,
+                "cwd": self._agent_work_dir,
             }
 
     def execute_shell(self, command: str, timeout: int = 30) -> Dict:
@@ -203,6 +245,7 @@ class CodeExecutor:
                     text=True,
                     timeout=timeout,
                     shell=False,
+                    cwd=self._agent_work_dir,
                 )
             else:
                 # Use bash on Linux/Mac
@@ -212,6 +255,7 @@ class CodeExecutor:
                     text=True,
                     timeout=timeout,
                     shell=False,
+                    cwd=self._agent_work_dir,
                 )
 
             duration_ms = int((time.time() - start_time) * 1000)
@@ -227,6 +271,7 @@ class CodeExecutor:
                 "stderr": stderr,
                 "exit_code": result.returncode,
                 "duration_ms": duration_ms,
+                "cwd": self._agent_work_dir,
             }
 
         except subprocess.TimeoutExpired:
@@ -239,6 +284,7 @@ class CodeExecutor:
                 "stderr": f"Command timed out after {timeout} seconds",
                 "exit_code": -1,
                 "duration_ms": duration_ms,
+                "cwd": self._agent_work_dir,
             }
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
@@ -251,6 +297,7 @@ class CodeExecutor:
                 "stderr": f"Execution error: {str(e)}",
                 "exit_code": -1,
                 "duration_ms": duration_ms,
+                "cwd": self._agent_work_dir,
             }
 
     async def execute_api(
@@ -425,6 +472,230 @@ class CodeExecutor:
             # Run sync methods in thread pool
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, lambda: self.execute_code(language, code, timeout))
+
+    # ─── File Operations ─────────────────────────────────────────────
+
+    def write_file(self, path: str, content: str, overwrite: bool = False) -> Dict:
+        """Write content to a file in the agent working directory.
+
+        Args:
+            path: File path (relative to agent work dir or absolute)
+            content: File content to write
+            overwrite: If False, don't overwrite existing files
+
+        Returns:
+            Dict with success, path, size, created_at
+        """
+        try:
+            abs_path = self._resolve_path(path)
+            
+            # Check if file exists and overwrite is False
+            if os.path.exists(abs_path) and not overwrite:
+                return {
+                    "success": False,
+                    "error": f"File already exists: {abs_path}. Use overwrite=True to replace.",
+                    "path": abs_path,
+                }
+            
+            # Create parent directories if needed
+            parent_dir = os.path.dirname(abs_path)
+            os.makedirs(parent_dir, exist_ok=True)
+            
+            # Write the file
+            with open(abs_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            file_size = os.path.getsize(abs_path)
+            created_at = datetime.now().isoformat()
+            
+            logger.info("File written: %s (%d bytes)", abs_path, file_size)
+            
+            return {
+                "success": True,
+                "path": abs_path,
+                "size": file_size,
+                "created_at": created_at,
+            }
+        except Exception as e:
+            logger.error("Failed to write file %s: %s", path, e)
+            return {
+                "success": False,
+                "error": str(e),
+                "path": path,
+            }
+
+    def read_file(self, path: str) -> Dict:
+        """Read content from a file in the agent working directory.
+
+        Args:
+            path: File path (relative to agent work dir or absolute)
+
+        Returns:
+            Dict with success, path, content, size
+        """
+        try:
+            abs_path = self._resolve_path(path)
+            
+            if not os.path.exists(abs_path):
+                return {
+                    "success": False,
+                    "error": f"File not found: {abs_path}",
+                    "path": abs_path,
+                }
+            
+            with open(abs_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            file_size = os.path.getsize(abs_path)
+            
+            return {
+                "success": True,
+                "path": abs_path,
+                "content": content,
+                "size": file_size,
+            }
+        except Exception as e:
+            logger.error("Failed to read file %s: %s", path, e)
+            return {
+                "success": False,
+                "error": str(e),
+                "path": path,
+            }
+
+    def create_project(self, name: str, template: str = "default") -> Dict:
+        """Create a new project in the agent working directory.
+
+        Args:
+            name: Project name (used as directory name)
+            template: Project template type (default, web, api, data)
+
+        Returns:
+            Dict with success, project_path, structure
+        """
+        try:
+            # Sanitize project name
+            safe_name = re.sub(r'[^\w\-]', '_', name)
+            project_path = os.path.join(self._agent_work_dir, safe_name)
+            
+            # Check if project already exists
+            if os.path.exists(project_path):
+                return {
+                    "success": False,
+                    "error": f"Project already exists: {project_path}",
+                    "project_path": project_path,
+                }
+            
+            # Create project structure based on template
+            structure = self._get_project_structure(template)
+            
+            # Create all directories
+            for dir_path in structure["directories"]:
+                full_path = os.path.join(project_path, dir_path)
+                os.makedirs(full_path, exist_ok=True)
+            
+            # Create template files
+            for file_path, content in structure["files"].items():
+                full_path = os.path.join(project_path, file_path)
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                with open(full_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            
+            logger.info("Project created: %s at %s", name, project_path)
+            
+            return {
+                "success": True,
+                "project_path": project_path,
+                "project_name": safe_name,
+                "template": template,
+                "structure": structure,
+            }
+        except Exception as e:
+            logger.error("Failed to create project %s: %s", name, e)
+            return {
+                "success": False,
+                "error": str(e),
+                "project_name": name,
+            }
+
+    def _get_project_structure(self, template: str) -> Dict:
+        """Get project structure based on template type.
+        
+        Args:
+            template: Template type (default, web, api, data)
+            
+        Returns:
+            Dict with directories and files
+        """
+        if template == "web":
+            return {
+                "directories": ["src", "public", "tests", "docs"],
+                "files": {
+                    "README.md": f"# Project\n\nCreated by AFILABS Agent\n\n## Getting Started\n\n```bash\nnpm install\nnpm start\n```\n",
+                    "package.json": '{\n  "name": "project",\n  "version": "1.0.0",\n  "scripts": {\n    "start": "react-scripts start",\n    "build": "react-scripts build",\n    "test": "react-scripts test"\n  }\n}\n',
+                    ".gitignore": "node_modules/\nbuild/\n.env\n",
+                }
+            }
+        elif template == "api":
+            return {
+                "directories": ["src", "tests", "docs", "scripts"],
+                "files": {
+                    "README.md": f"# API Project\n\nCreated by AFILABS Agent\n\n## Getting Started\n\n```bash\npip install -r requirements.txt\npython src/main.py\n```\n",
+                    "requirements.txt": "fastapi>=0.100.0\nuvicorn>=0.23.0\npydantic>=2.0.0\n",
+                    ".gitignore": "__pycache__/\n*.pyc\n.env\nvenv/\n",
+                }
+            }
+        elif template == "data":
+            return {
+                "directories": ["data", "notebooks", "src", "output", "docs"],
+                "files": {
+                    "README.md": f"# Data Project\n\nCreated by AFILABS Agent\n\n## Structure\n\n- `data/` - Raw and processed data\n- `notebooks/` - Jupyter notebooks\n- `src/` - Source code\n- `output/` - Generated outputs\n",
+                    "requirements.txt": "pandas>=2.0.0\nnumpy>=1.24.0\nmatplotlib>=3.7.0\njupyter>=1.0.0\n",
+                    ".gitignore": "data/raw/\noutput/\n.ipynb_checkpoints/\n",
+                }
+            }
+        else:  # default
+            return {
+                "directories": ["src", "tests", "docs"],
+                "files": {
+                    "README.md": f"# Project\n\nCreated by AFILABS Agent\n\n## Getting Started\n\nAdd your project documentation here.\n",
+                    ".gitignore": "__pycache__/\n*.pyc\n.env\nnode_modules/\nbuild/\n",
+                }
+            }
+
+    def list_projects(self) -> Dict:
+        """List all projects in the agent working directory.
+
+        Returns:
+            Dict with success, projects list
+        """
+        try:
+            projects = []
+            for item in os.listdir(self._agent_work_dir):
+                item_path = os.path.join(self._agent_work_dir, item)
+                if os.path.isdir(item_path):
+                    # Check if it looks like a project (has README or src)
+                    has_readme = os.path.exists(os.path.join(item_path, "README.md"))
+                    has_src = os.path.exists(os.path.join(item_path, "src"))
+                    projects.append({
+                        "name": item,
+                        "path": item_path,
+                        "has_readme": has_readme,
+                        "has_src": has_src,
+                        "created_at": datetime.fromtimestamp(os.path.getctime(item_path)).isoformat(),
+                    })
+            
+            return {
+                "success": True,
+                "projects": projects,
+                "count": len(projects),
+            }
+        except Exception as e:
+            logger.error("Failed to list projects: %s", e)
+            return {
+                "success": False,
+                "error": str(e),
+                "projects": [],
+            }
 
 
 # Singleton instance
