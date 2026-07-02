@@ -127,6 +127,37 @@ class HermesEngine:
                     agent["hb"] = ">5m"
                     agent["seen"] = "a while ago"
 
+    # ─── Message Bus Wrappers ─────────────────────────────────────
+
+    def get_messages(self, agent_id: str, msg_type: str = None, unread_only: bool = False, limit: int = 50, offset: int = 0):
+        """Get messages for an agent via the message bus."""
+        return self.message_bus.get_messages(
+            agent_id=agent_id,
+            msg_type=msg_type,
+            unread_only=unread_only,
+            limit=limit,
+            offset=offset,
+        )
+
+    def get_thread(self, agent_a: str, agent_b: str, limit: int = 50):
+        """Get conversation thread between two agents."""
+        return self.message_bus.get_thread(agent_a, agent_b, limit)
+
+    def get_conversations(self, agent_id: str):
+        """Get list of conversations for an agent."""
+        return self.message_bus.get_conversations(agent_id)
+
+    async def send_message(self, from_agent_id: str, to_agent_id: str = None, msg_type: str = "direct", subject: str = "", body: str = "", metadata: dict = None):
+        """Send a message between agents via the message bus."""
+        return self.message_bus.send(
+            from_agent_id=from_agent_id,
+            to_agent_id=to_agent_id,
+            msg_type=msg_type,
+            subject=subject,
+            body=body,
+            metadata=metadata,
+        )
+
     async def start_mock_activity(self):
         """Start mock activity for demo purposes."""
         # This method is called during startup but does nothing in production
